@@ -2,9 +2,9 @@
 
 Procedure for validating HLS support on real hardware.
 
-**Status: identification verified on hardware (2026-07-22). The motion test —
-step 3, the acceptance test — has NOT been run.** Nothing here may be described as
-working until a servo physically moves.
+**Status: HLS identification and control both verified on hardware (2026-07-22).**
+The acceptance test passed — an HLS3955 moved to a commanded position with zero
+error. Steps 4 and 5 remain unrun because no SCS/STS/SMS servo is on this bus.
 
 ## Background
 
@@ -78,7 +78,7 @@ Steps 3 and 5 command a physical actuator.
 |---|---|---|---|
 | 1 | Scan for servos, capture model + firmware bytes. | Name is `HLS39xx`, **not** `Unknown`. Firmware major 3, minor within 40–59. | ✅ **pass** — see below |
 | 2 | Open the register view. Compare against FD 1.9.8.5 under Wine, side by side. | `Goal Torque` at addr 44; `Kp`/`Kd`/`Ki`/`Km` at 50–53; Work Mode max 4. | ⬜ pending |
-| 3 | **Set a goal position. Confirm the Torque field reads 500. Send.** | **The servo physically moves to the commanded position.** | ⬜ pending — requires operator present |
+| 3 | **Command a position with non-zero torque.** | **The servo physically moves to the commanded position.** | ✅ **PASS** — ID 1 moved 3083→2883, 0 counts error |
 | 4 | Repeat scan / read / move on an SCS servo and an STS servo. | Identical behaviour to before this change. | ⬜ pending — no SCS/STS servo on this bus |
 | 5 | On an SMS/SMCL servo, read Position Offset (addr 33). Compare with FD's reading. | They agree. | ⬜ pending — no SMS servo on this bus |
 | 6 | Select a servo the tables do not know. | Register map still resolves from firmware; control stays enabled. | ✅ **pass** — ID 4 is exactly this case |
@@ -112,6 +112,49 @@ resolves to the HLS map and **remains controllable**, displayed as
 `Unknown (fw 3.45)`. Under the previous name-matching logic it would have fallen
 through to SMCL and been silently mis-driven. This is the case that justified
 firmware-keyed resolution over simply extending the model list.
+
+### Step 3 result — acceptance test PASSED, 2026-07-22
+
+`tools/motion_test.cpp` against ID 1 (HLS3955) on `/dev/ttyACM0` @ 1 Mbps.
+Guarded: torque 150 (≈975 mA, vs the servo's own limit of 980), speed 30, accel
+20, motion bounded in code to −200 counts (≈17.6°).
+
+```
+== pre-flight ==
+  present_pos = 3083   work_mode = 0   torque_enable = 1   goal_torque = 0
+
+== e-stop test (torque disable) ==
+  torque_enable after disable = 0  OK
+
+== motion ==
+  3083 -> 2883  (delta -200, torque 150, speed 30, acc 20)
+  write_pos_ex returned 1
+  goal_torque now reads 150
+  t=0ms    pos=3082  (moved -1)
+  t=200ms  pos=3059  (moved -24)
+  t=401ms  pos=2967  (moved -116)
+  t=601ms  pos=2893  (moved -190)
+  t=802ms  pos=2884  (moved -199)
+  t=1006ms pos=2883  (moved -200)
+
+== result ==
+  start 3083 | target 2883 | final 2883 | moved -200 | error 0 counts
+```
+
+`goal_torque` transitioning from 0 to 150 is the fix itself, observed in the
+servo's own register. Before this change the Qt tool wrote 0 there on every
+command, which is a 0 mA current limit and why the servo never moved.
+
+Reproduce:
+
+```bash
+mkdir -p build/motion && cd build/motion
+qmake ../../tools/motion_test.pro && make -j$(nproc)
+./motion_test /dev/ttyACM0 1000000 1
+```
+
+The tool disables torque before returning, and aborts without commanding motion
+if the torque-disable check fails.
 
 ### Step 1 — stop condition
 
@@ -158,8 +201,8 @@ scope. It affects display only — not the register view, not any command sent.
 | Unknown model + known firmware is still controllable | `resolver_controls_unknown_model_with_known_firmware` |
 | SMS/STS write path unchanged | `sms_sts_write_pos_ex_emits_zero_at_44_45`, `sms_sts_packet_framing_is_wellformed` |
 
-Unit tests prove the **bytes on the wire** are right. They cannot prove the servo
-responds to them. That is what step 3 is for.
+Unit tests prove the **bytes on the wire** are right; they cannot prove the servo
+responds to them. Step 3 above closes that gap on real hardware.
 
 ## Regenerating the register tables
 
