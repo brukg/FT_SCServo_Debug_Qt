@@ -3,3 +3,4 @@
 deb_root
 *.deb
 build/
+__pycache__/
