@@ -3,98 +3,194 @@
 namespace feetech_servo
 {
 
-#define SERVO_MODEL(major, minor, name) { (minor<<8 | major), name }
-QString getModelType(uint16_t id)
+namespace {
+
+struct ModelEntry
 {
-    static std::map<uint16_t, QString> model_list =
+    QString name;
+    uint8_t end;
+};
+
+struct FirmwareProfile
+{
+    uint8_t major;
+    uint8_t minor_start;
+    uint8_t minor_end;
+    uint8_t end;
+    feetech_servo::ModelSeries series;
+};
+
+// From setup.log [debug]. Firmware 3.20-3.39 appears twice, disambiguated by `end`.
+//
+// The 260623 ft_setup_bat also defines firmware families 5.x (CWSXX), 6.x
+// (LYNODE), 7.x (CWSR) and 8.x (TTSD). They are deliberately absent here: no
+// register tables have been ported for them, so they resolve as unknown and
+// fail closed rather than being driven through a guessed map.
+const std::vector<FirmwareProfile> firmware_profiles =
+{
+    { 0,  0, 39, 1, feetech_servo::SCS  },
+    { 1,  0, 19, 0, feetech_servo::SMCL },
+    // 1.20-1.39 is present in the 250729 config and dropped in 260623. Kept,
+    // because retaining it can only let an older SMCL servo resolve, whereas
+    // dropping it would regress one to fail-closed.
+    { 1, 20, 39, 0, feetech_servo::SMCL },
+    { 2, 40, 69, 0, feetech_servo::SMBL },
+    { 3,  0, 39, 0, feetech_servo::STS  },
+    { 3, 20, 39, 1, feetech_servo::SCS2 },
+    { 3, 40, 59, 0, feetech_servo::HLS  },
+};
+
+#define SERVO_MODEL(major, minor, name, end) { (uint16_t)((minor)<<8 | (major)), ModelEntry{name, end} }
+const std::map<uint16_t, ModelEntry> &model_list()
+{
+    static const std::map<uint16_t, ModelEntry> list =
     {
-        SERVO_MODEL(5, 0, "SCSXX"), 
-        SERVO_MODEL(5, 4, "SCS009"), 
-        SERVO_MODEL(5, 8, "SCS2332"), 
-        SERVO_MODEL(5, 12, "SCS45"), 
-        SERVO_MODEL(5, 15, "SCS15"), 
-        SERVO_MODEL(5, 16, "SCS315"), 
-        SERVO_MODEL(5, 25, "SCS115"), 
-        SERVO_MODEL(5, 35, "SCS215"), 
-        SERVO_MODEL(5, 40, "SCS40"), 
-        SERVO_MODEL(5, 60, "SCS6560"), 
-        SERVO_MODEL(5, 240, "SCDZZ"), 
-        SERVO_MODEL(6, 0, "SMXX-360M"), 
-        SERVO_MODEL(6, 3, "SM30-360M"), 
-        SERVO_MODEL(6, 8, "SM60-360M"), 
-        SERVO_MODEL(6, 12, "SM80-360M"), 
-        SERVO_MODEL(6, 16, "SM100-360M"), 
-        SERVO_MODEL(6, 20, "SM150-360M"), 
-        SERVO_MODEL(6, 24, "SM85-360M"), 
-        SERVO_MODEL(6, 26, "SM60-360M"), 
-        SERVO_MODEL(8, 0, "SM30BL"), 
-        SERVO_MODEL(8, 1, "SM30BL"), 
-        SERVO_MODEL(8, 2, "SM30BL"), 
-        SERVO_MODEL(8, 3, "SM30BL"), 
-        SERVO_MODEL(8, 4, "SM30BL"), 
-        SERVO_MODEL(8, 5, "SM30BL"), 
-        SERVO_MODEL(8, 6, "SM30BL"), 
-        SERVO_MODEL(8, 7, "SM30BL"), 
-        SERVO_MODEL(8, 8, "SM30BL"), 
-        SERVO_MODEL(8, 9, "SM30BL"), 
-        SERVO_MODEL(8, 10, "SM30BL"), 
-        SERVO_MODEL(8, 11, "SM30BL"), 
-        SERVO_MODEL(8, 12, "SM30BL"), 
-        SERVO_MODEL(8, 13, "SM30BL"), 
-        SERVO_MODEL(8, 14, "SM30BL"), 
-        SERVO_MODEL(8, 15, "SM30BL"), 
-        SERVO_MODEL(8, 16, "SM30BL"), 
-        SERVO_MODEL(8, 17, "SM30BL"), 
-        SERVO_MODEL(8, 18, "SM30BL"), 
-        SERVO_MODEL(8, 19, "SM30BL"), 
-        SERVO_MODEL(8, 25, "SM29BL(LJ)"), 
-        SERVO_MODEL(8, 29, "SM29BL(FT)"), 
-        SERVO_MODEL(8, 30, "SM30BL(FT)"), 
-        SERVO_MODEL(8, 20, "SM30BL(LJ)"), 
-        SERVO_MODEL(8, 40, "SM40BLHV"), 
-        SERVO_MODEL(8, 42, "SM45BLHV"), 
-        SERVO_MODEL(8, 44, "SM85BLHV"), 
-        SERVO_MODEL(8, 120, "SM120BLHV"), 
-        SERVO_MODEL(8, 220, "SM200BLHV"), 
-        SERVO_MODEL(9, 0, "STSXX"), 
-        SERVO_MODEL(9, 2, "STS3032"), 
-        SERVO_MODEL(9, 3, "STS3215"), 
-        SERVO_MODEL(9, 4, "STS3040"), 
-        SERVO_MODEL(9, 5, "STS3020"), 
-        SERVO_MODEL(9, 6, "STS3046"), 
-        SERVO_MODEL(9, 20, "SCSXX-2"), 
-        SERVO_MODEL(9, 15, "SCS15-2"), 
-        SERVO_MODEL(9, 35, "SCS225"), 
-        SERVO_MODEL(9, 40, "SCS40-2"), 
+        SERVO_MODEL(1, 1, "TTL-Node-A", 0),
+        SERVO_MODEL(5, 0, "SCSXX", 1),
+        SERVO_MODEL(5, 1, "SCS0002", 1),
+        SERVO_MODEL(5, 2, "SCS0037", 1),
+        SERVO_MODEL(5, 3, "SCS2304", 1),
+        SERVO_MODEL(5, 4, "SCS009", 1),
+        SERVO_MODEL(5, 5, "SCS1025", 1),
+        SERVO_MODEL(5, 6, "SCS0018", 1),
+        SERVO_MODEL(5, 7, "SCS0017", 1),
+        SERVO_MODEL(5, 8, "SCS2332", 1),
+        SERVO_MODEL(5, 9, "SCS0005", 1),
+        SERVO_MODEL(5, 10, "SCS0043", 1),
+        SERVO_MODEL(5, 12, "SCS45", 1),
+        SERVO_MODEL(5, 15, "SCS15", 1),
+        SERVO_MODEL(5, 16, "SCS315", 1),
+        SERVO_MODEL(5, 25, "SCS115", 1),
+        SERVO_MODEL(5, 35, "SCS215", 1),
+        SERVO_MODEL(5, 40, "SCS40", 1),
+        SERVO_MODEL(5, 60, "SCS6560", 1),
+        SERVO_MODEL(6, 0, "SMXX-360M", 0),
+        SERVO_MODEL(6, 4, "SM30-360M", 0),
+        SERVO_MODEL(6, 8, "SM60-360M", 0),
+        SERVO_MODEL(6, 12, "SM80-360M", 0),
+        SERVO_MODEL(6, 16, "SM100-360M", 0),
+        SERVO_MODEL(6, 20, "SM150-360M", 0),
+        SERVO_MODEL(6, 24, "SM85-360M", 0),
+        SERVO_MODEL(6, 26, "SM60-360M", 0),
+        SERVO_MODEL(8, 10, "SM30BL", 0),
+        SERVO_MODEL(8, 16, "SM100-360M", 0),
+        SERVO_MODEL(8, 20, "SM150-360M", 0),
+        SERVO_MODEL(8, 24, "SM24BL", 0),
+        SERVO_MODEL(8, 25, "SM70BLHV", 0),
+        SERVO_MODEL(8, 29, "SM29BL", 0),
+        SERVO_MODEL(8, 30, "SM30BL", 0),
+        SERVO_MODEL(8, 40, "SM40BLHV", 0),
+        SERVO_MODEL(8, 41, "SM80BLHV", 0),
+        SERVO_MODEL(8, 42, "SM45BLHV", 0),
+        SERVO_MODEL(8, 44, "SM85BLHV", 0),
+        SERVO_MODEL(8, 81, "SM160BLHV", 0),
+        SERVO_MODEL(8, 105, "SM105BLHV", 0),
+        SERVO_MODEL(8, 120, "SM120BLHV", 0),
+        SERVO_MODEL(8, 121, "SM260BLHV", 0),
+        SERVO_MODEL(8, 220, "SM200BLHV", 0),
+        SERVO_MODEL(8, 224, "SM224BLHV", 0),
+        SERVO_MODEL(9, 0, "STSXX", 0),
+        SERVO_MODEL(9, 1, "STS3015", 0),
+        SERVO_MODEL(9, 2, "STS3032", 0),
+        SERVO_MODEL(9, 3, "STS3215", 0),
+        SERVO_MODEL(9, 4, "STS3040", 0),
+        SERVO_MODEL(9, 5, "STS3020", 0),
+        SERVO_MODEL(9, 6, "STS3046", 0),
+        SERVO_MODEL(9, 7, "STS3045", 0),
+        SERVO_MODEL(9, 8, "STS3235", 0),
+        SERVO_MODEL(9, 9, "STS3095", 0),
+        SERVO_MODEL(9, 10, "STS3095", 0),
+        SERVO_MODEL(9, 11, "STS3250", 0),
+        SERVO_MODEL(9, 12, "STS3036", 0),
+        SERVO_MODEL(9, 13, "STS3120", 0),
+        SERVO_MODEL(9, 15, "SCS15-2", 1),
+        SERVO_MODEL(9, 20, "SCSXX-2", 1),
+        SERVO_MODEL(9, 25, "SCS215-2", 1),
+        SERVO_MODEL(9, 35, "SCS225", 1),
+        SERVO_MODEL(9, 40, "SCS40-2", 1),
+        SERVO_MODEL(9, 41, "SCS25-2", 1),
+        SERVO_MODEL(9, 46, "SCS46-2", 1),
+        SERVO_MODEL(10, 1, "HTS3235", 0),
+        SERVO_MODEL(10, 2, "HTS3032", 0),
+        SERVO_MODEL(10, 3, "HTS3240", 0),
+        SERVO_MODEL(10, 4, "HTS3235", 0),
+        SERVO_MODEL(10, 5, "STS3045BL", 0),
+        SERVO_MODEL(10, 6, "STS3046BL", 0),
+        SERVO_MODEL(10, 7, "HTS3032", 0),
+        SERVO_MODEL(10, 8, "HTS3045", 0),
+        SERVO_MODEL(10, 9, "STS3009BL", 0),
+        SERVO_MODEL(10, 10, "HLS3606", 0),
+        SERVO_MODEL(10, 11, "HLS3612", 0),
+        SERVO_MODEL(10, 12, "HLS3620", 0),
+        SERVO_MODEL(10, 13, "HLS3625", 0),
+        SERVO_MODEL(10, 14, "HLS3640", 0),
+        SERVO_MODEL(10, 15, "HLS3925", 0),
+        SERVO_MODEL(10, 16, "HLS3930", 0),
+        SERVO_MODEL(10, 17, "HLS3935", 0),
+        SERVO_MODEL(10, 18, "HLS3950", 0),
+        SERVO_MODEL(10, 19, "HLS3955", 0),
+        SERVO_MODEL(10, 20, "HLS3915", 0),
+        SERVO_MODEL(10, 21, "HLS3615", 0),
+        SERVO_MODEL(10, 22, "HLS3960", 0),
+        SERVO_MODEL(10, 23, "HLS3608", 0),
+        SERVO_MODEL(10, 24, "HLS3604", 0),
+        SERVO_MODEL(10, 25, "STS3025BL", 0),
+        SERVO_MODEL(10, 26, "STS3200BL", 0),
+        SERVO_MODEL(10, 27, "HLS2915", 0),
+        SERVO_MODEL(10, 28, "HLS3906", 0),
+        SERVO_MODEL(10, 29, "HLS2606", 0),
+        SERVO_MODEL(11, 1, "SWS3225", 0),
+        SERVO_MODEL(11, 101, "TTL_E02", 0),
+        SERVO_MODEL(11, 102, "TTL_E02", 0),
+        SERVO_MODEL(12, 1, "SR3307", 0),
+        SERVO_MODEL(13, 1, "TTL_SD01", 0),
     };
-
-    if(auto it = model_list.find(id); it != model_list.end())
-    {
-        return it->second;
-    }
-
-    return "Unknown";
+    return list;
 }
 #undef SERVO_MODEL
 
-ModelSeries getModelSeries(QString modelName)
+}
+
+ServoProfile resolveServo(uint16_t model_number, uint16_t firmware_version)
 {
-    if(modelName.startsWith("STS"))
+    ServoProfile p;
+    p.name   = "Unknown";
+    p.series = UNKNOWN;
+    p.end    = 0;
+    p.known  = false;
+
+    const auto &models = model_list();
+    auto it = models.find(model_number);
+    if(it != models.end())
     {
-        return STS;
+        p.name = it->second.name;
+        p.end  = it->second.end;
     }
-    else if(modelName.startsWith("SC"))
+
+    const uint8_t fw_major = firmware_version & 0xff;
+    const uint8_t fw_minor = (firmware_version >> 8) & 0xff;
+
+    for(const auto &fp : firmware_profiles)
     {
-        return SCS;
+        if(fp.major != fw_major)
+            continue;
+        if(fw_minor < fp.minor_start || fp.minor_end < fw_minor)
+            continue;
+        // When the model is unknown its endianness is unknown too, so accept the
+        // first firmware match. When the model IS known, the flag disambiguates
+        // the overlapping 3.20-3.39 range.
+        if(it != models.end() && fp.end != p.end)
+            continue;
+
+        p.series = fp.series;
+        p.end    = fp.end;
+        p.known  = true;
+        if(it == models.end())
+            p.name = QString("Unknown (fw %1.%2)").arg(fw_major).arg(fw_minor);
+        break;
     }
-    else if(modelName.startsWith("SM") && modelName.contains("BL"))
-    {
-        return SMBL;
-    }
-    else
-    {
-        return SMCL;
-    }
+
+    return p;
 }
 
 SCSerial::SCSerial(QSerialPort *serial)
@@ -389,6 +485,29 @@ int SCSerial::read_model_number(int id)
         }
     }
     return model_number;
+}
+
+// Addresses 0 and 1 hold the firmware version, which is what selects the
+// register map (the model number at 3/4 only names the servo).
+int SCSerial::read_firmware_version(int id)
+{
+    error_ = 0;
+
+    int major = read_byte(id, 0);
+    if(major == -1)
+    {
+        error_ = 1;
+        return -1;
+    }
+
+    int minor = read_byte(id, 1);
+    if(minor == -1)
+    {
+        error_ = 1;
+        return -1;
+    }
+
+    return (minor << 8) | major;
 }
 
 int SCSerial::write(uint8_t *n_dat, int n_len) {

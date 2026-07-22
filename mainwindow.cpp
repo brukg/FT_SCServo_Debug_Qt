@@ -28,6 +28,7 @@ MainWindow::MainWindow(QWidget *parent)
     scserial_ = new feetech_servo::SCSerial(serial_);
     sms_sts_serial_ = new feetech_servo::SMS_STS(scserial_);
     scs_serial_ = new feetech_servo::SCSCL(scserial_);
+    hls_serial_ = new feetech_servo::HLSCL(scserial_);
 
     setupComSettings();
     setupServoLists();
@@ -50,6 +51,7 @@ MainWindow::~MainWindow()
     delete scserial_;
     delete scs_serial_;
     delete sms_sts_serial_;
+    delete hls_serial_;
     delete servo_list_model_;
     delete prog_mem_model_;
     delete port_search_timer_;
@@ -176,9 +178,16 @@ void MainWindow::clearServoList()
     ui->ServoListView->setEditTriggers(QAbstractItemView::NoEditTriggers);
 }
 
-void MainWindow::appendServoList(const int id, const QString &name)
+void MainWindow::appendServoList(const int id, const feetech_servo::ServoProfile &profile)
 {
-    servo_list_model_->appendRow(QList<QStandardItem*>() << new QStandardItem(QString::number(id)) << new QStandardItem(name));
+    // Stash the resolved profile on the row so reselecting a servo needs no
+    // further serial IO, and never has to re-derive the series from its name.
+    auto *id_item = new QStandardItem(QString::number(id));
+    id_item->setData(static_cast<int>(profile.series), Qt::UserRole + 1);
+    id_item->setData(static_cast<int>(profile.end),    Qt::UserRole + 2);
+    id_item->setData(profile.known,                    Qt::UserRole + 3);
+
+    servo_list_model_->appendRow(QList<QStandardItem*>() << id_item << new QStandardItem(profile.name));
 }
 
 void MainWindow::clearProgMemTable()
@@ -200,7 +209,7 @@ void MainWindow::clearProgMemTable()
 void MainWindow::updatePorgMemTable()
 {
     clearProgMemTable();
-    auto mem_config = getMemConfig(select_servo_.model_);
+    auto mem_config = getMemConfig(select_servo_.profile_.series);
 
     for(auto &item : mem_config)
     {
@@ -224,17 +233,29 @@ void MainWindow::setIntLineEdit(QLineEdit *edit)
     edit->setValidator(new QRegExpValidator(QRegExp("-?\\d*"), edit));
 }
 
-void MainWindow::selectServoSeries(feetech_servo::ModelSeries series)
+void MainWindow::applyServoProfile(const feetech_servo::ServoProfile &profile)
 {
-    if(series == feetech_servo::ModelSeries::SCS)
+    select_servo_.profile_ = profile;
+    scserial_->set_end(profile.end);
+
+    // Fail closed: without a resolved register map any write could land on the
+    // wrong register, so show state but refuse to command.
+    ui->groupBox_3->setEnabled(profile.known);
+
+    // Addresses 44/45 mean different things per family. On HLS they are Goal
+    // Torque (max torque current, 6.5mA units) and a zero there immobilises the
+    // servo, so the field is relabelled and given a working default.
+    if(profile.series == feetech_servo::ModelSeries::HLS)
     {
-        scserial_->set_end(1);
+        ui->label_16->setText("Torque (x6.5mA)");
+        if(ui->timeLineEdit->text().toInt() == 0)
+            ui->timeLineEdit->setText("500");
     }
     else
     {
-        scserial_->set_end(0);
+        ui->label_16->setText("Time");
     }
-    select_servo_.model_ = series;
+
     updatePorgMemTable();
 }
 
@@ -244,57 +265,115 @@ const std::vector<feetech_servo::MemoryConfig>& MainWindow::getMemConfig(feetech
     {
         case feetech_servo::ModelSeries::SCS:
             return feetech_servo::SCSMemConfig;
+        case feetech_servo::ModelSeries::SCS2:
+            return feetech_servo::SCS2MemConfig;
         case feetech_servo::ModelSeries::STS:
             return feetech_servo::STSMemConfig;
         case feetech_servo::ModelSeries::SMBL:
             return feetech_servo::SMBLMemConfig;
         case feetech_servo::ModelSeries::SMCL:
             return feetech_servo::SMCLMemConfig;
+        case feetech_servo::ModelSeries::HLS:
+            return feetech_servo::HLSMemConfig;
         default:
             return feetech_servo::STSMemConfig;
     }
 }
 
+int MainWindow::currentTorqueField() const
+{
+    return ui->timeLineEdit->text().toInt();
+}
+
+// Single dispatch point for every position command. Previously this branch was
+// duplicated at nine call sites, which is how HLS came to be driven through the
+// SMS/STS write path.
+void MainWindow::writeGoal(int pos, int time, int speed, int acc, int torque)
+{
+    if(!select_servo_.profile_.known)
+        return;
+
+    switch(select_servo_.profile_.series)
+    {
+        case feetech_servo::ModelSeries::SCS:
+        case feetech_servo::ModelSeries::SCS2:
+            scs_serial_->write_pos(select_servo_.id_, pos, time, speed);
+            break;
+
+        case feetech_servo::ModelSeries::HLS:
+            hls_serial_->servo_mode(select_servo_.id_);
+            hls_serial_->write_pos_ex(select_servo_.id_, pos, speed, acc, torque);
+            break;
+
+        default:
+            sms_sts_serial_->rotation_mode(select_servo_.id_);
+            sms_sts_serial_->write_pos_ex(select_servo_.id_, pos, speed, acc);
+            break;
+    }
+}
+
 void MainWindow::writePos(int pos, int time, int speed, int acc)
 {
-    if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
-    {
-        scs_serial_->write_pos(select_servo_.id_, pos, time, speed);
-    }
-    else
-    {
-        sms_sts_serial_->rotation_mode(select_servo_.id_);
-        sms_sts_serial_->write_pos_ex(select_servo_.id_, pos, speed, acc);
-    }
+    writeGoal(pos, time, speed, acc, currentTorqueField());
 }
 
 void MainWindow::syncWritePos(int pos, int time, int speed, int acc)
 {
+    if(!select_servo_.profile_.known)
+        return;
+
     std::vector<uint16_t> times(id_list_.size(), time);
     std::vector<uint16_t> speeds(id_list_.size(), speed);
     std::vector<uint8_t> accs(id_list_.size(), acc);
-    if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
+
+    switch(select_servo_.profile_.series)
     {
-        std::vector<uint16_t> goals(id_list_.size(), pos);
-        scs_serial_->sync_write_pos(id_list_.data(), id_list_.size(), goals.data(), times.data(), speeds.data());
-    }
-    else
-    {
-        std::vector<int16_t> goals(id_list_.size(), pos);
-        sms_sts_serial_->sync_write_pos_ex(id_list_.data(), id_list_.size(), goals.data(), speeds.data(), accs.data());
+        case feetech_servo::ModelSeries::SCS:
+        case feetech_servo::ModelSeries::SCS2:
+        {
+            std::vector<uint16_t> goals(id_list_.size(), pos);
+            scs_serial_->sync_write_pos(id_list_.data(), id_list_.size(), goals.data(), times.data(), speeds.data());
+            break;
+        }
+
+        case feetech_servo::ModelSeries::HLS:
+        {
+            std::vector<int16_t> goals(id_list_.size(), pos);
+            std::vector<uint16_t> torques(id_list_.size(), currentTorqueField());
+            hls_serial_->sync_write_pos_ex(id_list_.data(), id_list_.size(), goals.data(), speeds.data(), accs.data(), torques.data());
+            break;
+        }
+
+        default:
+        {
+            std::vector<int16_t> goals(id_list_.size(), pos);
+            sms_sts_serial_->sync_write_pos_ex(id_list_.data(), id_list_.size(), goals.data(), speeds.data(), accs.data());
+            break;
+        }
     }
 }
 
 void MainWindow::regWritePos(int pos, int time, int speed, int acc)
 {
-    if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
+    if(!select_servo_.profile_.known)
+        return;
+
+    switch(select_servo_.profile_.series)
     {
-        scs_serial_->reg_write_pos(select_servo_.id_, pos, time, speed);
-    }
-    else
-    {
-        sms_sts_serial_->rotation_mode(select_servo_.id_);
-        sms_sts_serial_->reg_write_pos_ex(select_servo_.id_, pos, speed, acc);
+        case feetech_servo::ModelSeries::SCS:
+        case feetech_servo::ModelSeries::SCS2:
+            scs_serial_->reg_write_pos(select_servo_.id_, pos, time, speed);
+            break;
+
+        case feetech_servo::ModelSeries::HLS:
+            hls_serial_->servo_mode(select_servo_.id_);
+            hls_serial_->reg_write_pos_ex(select_servo_.id_, pos, speed, acc, currentTorqueField());
+            break;
+
+        default:
+            sms_sts_serial_->rotation_mode(select_servo_.id_);
+            sms_sts_serial_->reg_write_pos_ex(select_servo_.id_, pos, speed, acc);
+            break;
     }
 }
 
@@ -388,11 +467,17 @@ void MainWindow::onSearchTimerTimeout()
         if(0 < ret)
         {
             int mid = scserial_->read_model_number(ret);
-            QString name = feetech_servo::getModelType(mid);
-            appendServoList(ret, name);
+            int fw  = scserial_->read_firmware_version(ret);
+            auto profile = feetech_servo::resolveServo(mid, fw);
+
+            qInfo("ID %d: model=0x%04x firmware=0x%04x -> %s (series=%d, end=%d, known=%d)",
+                  ret, mid, fw, qPrintable(profile.name),
+                  int(profile.series), int(profile.end), int(profile.known));
+
+            appendServoList(ret, profile);
             id_list_.push_back(ret);
             select_servo_.id_ = ret;
-            selectServoSeries(feetech_servo::getModelSeries(name));
+            applyServoProfile(profile);
         }
         search_id_++;
         search_timer_->start(1);
@@ -406,8 +491,17 @@ void MainWindow::onServoListSelection()
     std::size_t row = selectedRows.row();
     auto index = servo_list_model_->index(row, 0);
     select_servo_.id_ = servo_list_model_->data(index).toInt();
-    index = servo_list_model_->index(row, 1);
-    selectServoSeries(feetech_servo::getModelSeries(servo_list_model_->data(index).toString()));
+
+    // Recover the profile stashed on the row at scan time. Re-deriving it from
+    // the displayed name is what caused HLS servos to be driven as SMCL.
+    feetech_servo::ServoProfile profile;
+    profile.series = static_cast<feetech_servo::ModelSeries>(
+        servo_list_model_->data(index, Qt::UserRole + 1).toInt());
+    profile.end   = static_cast<uint8_t>(servo_list_model_->data(index, Qt::UserRole + 2).toInt());
+    profile.known = servo_list_model_->data(index, Qt::UserRole + 3).toBool();
+    profile.name  = servo_list_model_->data(servo_list_model_->index(row, 1)).toString();
+
+    applyServoProfile(profile);
 }
 
 void MainWindow::onGoalSliderValueChanged()
@@ -462,13 +556,19 @@ void MainWindow::onTorqueEnableCheckBoxStateChanged()
     if(!isServoValidNow())
         return;
     
-    if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
+    const bool enable = ui->torqueEnableCheckBox->isChecked();
+    switch(select_servo_.profile_.series)
     {
-        scs_serial_->enable_torque(select_servo_.id_, ui->torqueEnableCheckBox->isChecked());
-    }
-    else
-    {
-        sms_sts_serial_->enable_torque(select_servo_.id_, ui->torqueEnableCheckBox->isChecked());
+        case feetech_servo::ModelSeries::SCS:
+        case feetech_servo::ModelSeries::SCS2:
+            scs_serial_->enable_torque(select_servo_.id_, enable);
+            break;
+        case feetech_servo::ModelSeries::HLS:
+            hls_serial_->enable_torque(select_servo_.id_, enable);
+            break;
+        default:
+            sms_sts_serial_->enable_torque(select_servo_.id_, enable);
+            break;
     }
 }
 
@@ -523,15 +623,7 @@ void MainWindow::onSweepButtonClicked()
         ui->setpButton->setEnabled(false);
         latest_auto_debug_goal_ = ui->startLineEdit->text().toUInt();
 
-        if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
-        {
-            scs_serial_->write_pos(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
-        else
-        {
-            sms_sts_serial_->rotation_mode(select_servo_.id_);
-            sms_sts_serial_->write_pos_ex(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
+        writeGoal(latest_auto_debug_goal_, 0, 0, 0, currentTorqueField());
         auto_debug_timer_->start(ui->sweepLineEdit->text().toUInt());
     }
 }
@@ -555,15 +647,7 @@ void MainWindow::onSetpButtonClicked()
         ui->setpButton->setText("Stop");
         ui->sweepButton->setEnabled(false);
         latest_auto_debug_goal_ = ui->startLineEdit->text().toUInt();
-        if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
-        {
-            scs_serial_->write_pos(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
-        else
-        {
-            sms_sts_serial_->rotation_mode(select_servo_.id_);
-            sms_sts_serial_->write_pos_ex(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
+        writeGoal(latest_auto_debug_goal_, 0, 0, 0, currentTorqueField());
         auto_debug_timer_->start(ui->setpDelayLineEdit->text().toUInt());
     }
 }
@@ -594,15 +678,7 @@ void MainWindow::onAutoDebugTimerTimeout()
         {
             latest_auto_debug_goal_ = start;
         }
-        if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
-        {
-            scs_serial_->write_pos(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
-        else
-        {
-            sms_sts_serial_->rotation_mode(select_servo_.id_);
-            sms_sts_serial_->write_pos_ex(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
+        writeGoal(latest_auto_debug_goal_, 0, 0, 0, currentTorqueField());
     }
     else if(setp_running_)
     {
@@ -623,15 +699,7 @@ void MainWindow::onAutoDebugTimerTimeout()
             setp_increase_ = true;
         }
 
-        if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
-        {
-            scs_serial_->write_pos(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
-        else
-        {
-            sms_sts_serial_->rotation_mode(select_servo_.id_);
-            sms_sts_serial_->write_pos_ex(select_servo_.id_, latest_auto_debug_goal_, 0, 0);
-        }
+        writeGoal(latest_auto_debug_goal_, 0, 0, 0, currentTorqueField());
     }
     else
     {
@@ -757,7 +825,7 @@ void MainWindow::onProgTimerTimeout()
     int lastVisibleRow = ui->memoryTableView->indexAt(ui->memoryTableView->viewport()->rect().bottomLeft()).row();
     if (firstVisibleRow != -1 && lastVisibleRow != -1)
     {
-        auto mem_config = getMemConfig(select_servo_.model_);
+        auto mem_config = getMemConfig(select_servo_.profile_.series);
         for(int i = firstVisibleRow; i <= lastVisibleRow; i++)
         {
             // メモリ更新
@@ -785,7 +853,7 @@ void MainWindow::onMemoryTableSelection()
     auto index = prog_mem_model_->index(row, 1);
     ui->memLabel->setText(prog_mem_model_->data(index).toString());
     ui->memSetLineEdit->setText(prog_mem_model_->data(prog_mem_model_->index(row, 2)).toString());
-    auto mem_config = getMemConfig(select_servo_.model_);
+    auto mem_config = getMemConfig(select_servo_.profile_.series);
     bool is_readonly = mem_config[row].is_readonly;
     if(is_readonly)
     {
@@ -803,7 +871,7 @@ void MainWindow::onMemSetButtonClicked()
 {
     is_mem_writing_ = true;
     QModelIndex selectedRows = ui->memoryTableView->selectionModel()->selectedRows().first();
-    auto mem_config = getMemConfig(select_servo_.model_);
+    auto mem_config = getMemConfig(select_servo_.profile_.series);
     auto &[address, name, size, default_value, dir_bit, is_eprom, is_readonly, min_val, max_val] = mem_config[selectedRows.row()];
 
     // Todo address参照じゃなくする
@@ -864,7 +932,8 @@ void MainWindow::onServoReadTimerTimeout()
     static int count = 0;
     if (isServoValidNow())
     {
-        if(select_servo_.model_ == feetech_servo::ModelSeries::SCS)
+        if(select_servo_.profile_.series == feetech_servo::ModelSeries::SCS ||
+           select_servo_.profile_.series == feetech_servo::ModelSeries::SCS2)
         {
             switch(count)
             {

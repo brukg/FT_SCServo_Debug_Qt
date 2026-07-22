@@ -18,22 +18,36 @@
 namespace feetech_servo
 {
 
-QString getModelType(uint16_t id);
-
 enum ModelSeries
 {
 	SMCL,
 	SMBL,
 	STS,
-	SCS
+	SCS,
+	HLS,
+	SCS2,
+	UNKNOWN
 };
 
-ModelSeries getModelSeries(QString modelName);
+struct ServoProfile
+{
+    QString     name;            // display name, e.g. "HLS3625"
+    ModelSeries series;          // which register map and control class to use
+    uint8_t     end;             // endianness for host<->servo word packing
+    bool        known;           // false => fail closed, disable control
+};
+
+// Resolves a servo the way FD 1.9.8.5 does: the model number (addresses 3,4)
+// gives the display name and endianness; the firmware version (addresses 0,1)
+// plus that endianness gives the register map. Model major 10 covers both HTS
+// (STS map) and HLS (HLS map), so the name alone cannot decide.
+ServoProfile resolveServo(uint16_t model_number, uint16_t firmware_version);
 
 class SCSerial
 {
 public:
     SCSerial(QSerialPort *serial);
+    virtual ~SCSerial() = default;
 
     void set_end(uint8_t end) { end_ = end; }
 
@@ -47,12 +61,13 @@ public:
     int read_byte(uint8_t id, uint8_t mem_addr);
     int read_word(uint8_t id, uint8_t mem_addr);
     int ping(uint8_t id);
-	int write(uint8_t *n_dat, int n_len);
-	int read(uint8_t *n_dat, int n_len);
-	int write(uint8_t b_dat);
+	virtual int write(uint8_t *n_dat, int n_len);
+	virtual int read(uint8_t *n_dat, int n_len);
+	virtual int write(uint8_t b_dat);
 	void read_flush() { /* do not anything */ }
 	void write_flush() { /* do not anything */}
     int read_model_number(int id);
+    int read_firmware_version(int id);
 
     void set_timeout(uint16_t timeout) { timeout_ = timeout; }
 
@@ -78,5 +93,6 @@ protected:
 
 #include "sms_sts.h"
 #include "scscl.h"
+#include "hlscl.h"
 
 #endif // SCSERIAL_H

@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Generate FT_SCServo_Debug_Qt register tables from FeeTech's ft_setup_bat config.
+
+FD is data-driven: it parses ft_setup_bat/setup.log at startup to learn every
+servo's register map and model name. This script transcribes that data into the
+C++ tables the Qt tool uses, so the two stay in agreement without hand-copying
+~400 values.
+
+IMPORTANT -- use the newest ft_setup_bat package you have, NOT the copy bundled
+inside an FD release. ft_setup_bat ships separately and is updated far more
+often than FD itself. The 260623 package names model 10.27 (HLS2915) and four
+other servos that the copy bundled with FD 1.9.8.5 (250729) does not, so
+generating from the bundled copy makes recent servos show as "Unknown" even
+though a stock FD install names them correctly.
+
+Reconciliation policy (see docs/superpowers/specs/2026-07-22-hls-servo-support-design.md):
+CN (setup.log) is authoritative for structure, sizes, direction bits, ranges and
+defaults. EN (setup_en.log) supplies display names only. Where EN's name
+contradicts CN semantics, CN wins and the English name is overridden below.
+
+Usage:
+  tools/gen_servo_tables.py <path-to-ft_setup_bat-dir>
+"""
+import sys
+import pathlib
+
+# Firmware key (from the [内存] block header) -> C++ table identifier.
+TABLES = {
+    '1,0,19,0':  'SMCLMemConfig',
+    '2,40,69,0': 'SMBLMemConfig',
+    '3,0,39,0':  'STSMemConfig',
+    '0,0,39,1':  'SCSMemConfig',
+    '3,40,59,0': 'HLSMemConfig',
+    '3,20,39,1': 'SCS2MemConfig',
+}
+
+# EN name is wrong or missing; CN semantics win. Keyed (firmware_key, address).
+NAME_OVERRIDES = {
+    ('3,40,59,0', 44): 'Goal Current',           # EN says "Goal PWM" +-32766; CN says
+                                                 # 目标电流 +-2048. Max torque current,
+                                                 # 6.5mA units. Wrong in EN in both the
+                                                 # 250729 and 260623 packages.
+    ('0,0,39,1', 18):  'Phase',                  # absent from EN
+    ('3,20,39,1', 34): 'Position Offset Value',  # absent from EN
+    ('3,20,39,1', 44): 'Goal PWM',               # EN says "Running Time"
+}
+
+AREA_IS_EPROM = {'EPROM': 'true', 'SRAM': 'false'}
+RW_IS_READONLY = {'只读': 'true', '读写': 'false', '默认': 'true'}
+
+
+def _decode(path):
+    return path.read_bytes().decode('gb18030', errors='replace').splitlines()
+
+
+def parse_memory(path):
+    """Return {firmware_key: {address: [name, size, default, dir, area, rw, min, max]}}."""
+    lines = _decode(path)
+    out, i = {}, 0
+    while i < len(lines):
+        if lines[i].strip() == '[内存]':
+            key = lines[i + 1].strip()
+            rows, j = {}, i + 2
+            while j < len(lines) and lines[j].strip() != '[内存结束]':
+                parts = [p.strip() for p in lines[j].split(',')]
+                if len(parts) >= 9 and parts[0].isdigit():
+                    rows[int(parts[0])] = parts[1:9]
+                j += 1
+            out[key] = rows
+            i = j
+        i += 1
+    return out
+
+
+def parse_models(path):
+    """Return sorted [(major, minor, endian_flag, name)] from the [型号] section."""
+    out, inside = [], False
+    for line in _decode(path):
+        s = line.strip()
+        if s == '[型号]':
+            inside = True
+            continue
+        if s == '[型号结束]':
+            break
+        if inside and s and s[0].isdigit():
+            p = [x.strip() for x in s.split(',')]
+            if len(p) >= 5:
+                major, lo, hi, flag, name = int(p[0]), int(p[1]), int(p[2]), int(p[3]), p[4]
+                for minor in range(lo, hi + 1):
+                    out.append((major, minor, flag, name))
+    # Later rows win on duplicates, matching FD's last-wins parse order.
+    dedup = {}
+    for major, minor, flag, name in out:
+        dedup[(major, minor)] = (flag, name)
+    return [(k[0], k[1], v[0], v[1]) for k, v in sorted(dedup.items())]
+
+
+def emit_table(ident, rows_cn, rows_en, key):
+    lines = ['const std::vector<MemoryConfig> %s =' % ident, '{']
+    for addr in sorted(rows_cn):
+        name_cn, size, default, dirbit, area, rw, lo, hi = rows_cn[addr]
+
+        # DEFAULT-area rows are FD-internal tuning values, not servo registers.
+        if area not in AREA_IS_EPROM:
+            continue
+
+        name = NAME_OVERRIDES.get((key, addr))
+        if name is None:
+            en = rows_en.get(addr)
+            if en is None:
+                raise SystemExit(
+                    'ERROR: %s addr %d (%s) has no English name and no override.\n'
+                    '       Add it to NAME_OVERRIDES with a name derived from the '
+                    'Chinese term.' % (ident, addr, name_cn))
+            name = en[0]
+
+        default = default.strip() or '0'
+        lines.append(
+            '    {%d, "%s", %s, %s, %s, %s, %s, %s, %s},'
+            % (addr, name, size, default, dirbit,
+               AREA_IS_EPROM[area], RW_IS_READONLY[rw], lo, hi))
+    lines.append('};')
+    return '\n'.join(lines)
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__)
+    d = pathlib.Path(sys.argv[1])
+    cn = parse_memory(d / 'setup.log')
+    en = parse_memory(d / 'setup_en.log')
+
+    print('// GENERATED by tools/gen_servo_tables.py from FD 1.9.8.5 setup.log.')
+    print('// Do not edit by hand -- rerun the generator instead.')
+    print('// CN setup.log is authoritative for structure; EN supplies names.')
+    print()
+    for key, ident in TABLES.items():
+        if key not in cn:
+            raise SystemExit('ERROR: firmware key %s missing from setup.log' % key)
+        print(emit_table(ident, cn[key], en.get(key, {}), key))
+        print()
+
+    print('// ---- model table (paste into servo/scserial.cpp) ----')
+    for major, minor, flag, name in parse_models(d / 'setup.log'):
+        print('        SERVO_MODEL(%d, %d, "%s", %d),' % (major, minor, name, flag))
+
+
+if __name__ == '__main__':
+    main()

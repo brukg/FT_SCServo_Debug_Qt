@@ -20,6 +20,7 @@ HEADERS += \
     servo/servo_types.h \
     servo/sms_sts.h \
     servo/scscl.h \
+    servo/hlscl.h \
     simpegraphwiget.h
 
 FORMS += \
