@@ -41,7 +41,16 @@ class TestPackets : public QObject
 private slots:
     void sms_sts_write_pos_ex_emits_zero_at_44_45();
     void sms_sts_packet_framing_is_wellformed();
+
+    void resolver_identifies_hls();
+    void resolver_distinguishes_hts_from_hls_same_major();
+    void resolver_uses_endianness_to_break_firmware_overlap();
+    void resolver_fails_closed_on_unknown_model();
+    void resolver_controls_unknown_model_with_known_firmware();
 };
+
+// Model and firmware numbers are packed (minor << 8 | major).
+static uint16_t mk(uint8_t major, uint8_t minor) { return (uint16_t)((minor << 8) | major); }
 
 // Characterization: documents CURRENT behaviour. On SMS/STS addresses 44/45 are
 // Goal Time / PWM open-loop speed, and zero there is correct and harmless.
@@ -81,6 +90,57 @@ void TestPackets::sms_sts_packet_framing_is_wellformed()
     for (size_t i = 2; i + 1 < serial.tx.size(); i++)
         sum += serial.tx[i];
     QCOMPARE(serial.tx.back(), uint8_t(~sum));
+}
+
+void TestPackets::resolver_identifies_hls()
+{
+    auto p = feetech_servo::resolveServo(mk(10, 13), mk(3, 42));
+    QCOMPARE(p.name, QString("HLS3625"));
+    QCOMPARE(p.series, feetech_servo::HLS);
+    QCOMPARE(p.end, uint8_t(0));
+    QVERIFY(p.known);
+}
+
+// Model major 10 spans two register maps. Firmware, not name, decides.
+void TestPackets::resolver_distinguishes_hts_from_hls_same_major()
+{
+    auto hts = feetech_servo::resolveServo(mk(10, 1), mk(3, 10));
+    QCOMPARE(hts.name, QString("HTS3235"));
+    QCOMPARE(hts.series, feetech_servo::STS);
+
+    auto hls = feetech_servo::resolveServo(mk(10, 13), mk(3, 42));
+    QCOMPARE(hls.series, feetech_servo::HLS);
+}
+
+// Firmware 3.20-3.39 matches both STS (flag 0) and SCSXX-2 (flag 1).
+void TestPackets::resolver_uses_endianness_to_break_firmware_overlap()
+{
+    auto scs2 = feetech_servo::resolveServo(mk(9, 15), mk(3, 25));
+    QCOMPARE(scs2.name, QString("SCS15-2"));
+    QCOMPARE(scs2.series, feetech_servo::SCS2);
+    QCOMPARE(scs2.end, uint8_t(1));
+
+    auto sts = feetech_servo::resolveServo(mk(9, 3), mk(3, 25));
+    QCOMPARE(sts.series, feetech_servo::STS);
+    QCOMPARE(sts.end, uint8_t(0));
+}
+
+void TestPackets::resolver_fails_closed_on_unknown_model()
+{
+    auto p = feetech_servo::resolveServo(mk(99, 99), mk(99, 99));
+    QCOMPARE(p.name, QString("Unknown"));
+    QCOMPARE(p.series, feetech_servo::UNKNOWN);
+    QVERIFY(!p.known);
+}
+
+// A servo newer than the model table is still safely controllable, because the
+// register map comes from firmware.
+void TestPackets::resolver_controls_unknown_model_with_known_firmware()
+{
+    auto p = feetech_servo::resolveServo(mk(10, 99), mk(3, 42));
+    QCOMPARE(p.series, feetech_servo::HLS);
+    QVERIFY(p.known);
+    QVERIFY(p.name.startsWith("Unknown"));
 }
 
 QTEST_MAIN(TestPackets)
