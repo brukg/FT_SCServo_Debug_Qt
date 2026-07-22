@@ -156,6 +156,35 @@ qmake ../../tools/motion_test.pro && make -j$(nproc)
 The tool disables torque before returning, and aborts without commanding motion
 if the torque-disable check fails.
 
+### Sweep / step / slider — fixed 2026-07-22
+
+Sweep, step and the goal slider all command `writeGoal(goal, 0, 0, 0, torque)` —
+**speed 0**. On SMS/STS that means "no speed limit". HLS takes it literally.
+
+Measured on ID 1 (HLS3955), torque 150, 150-count delta:
+
+```
+speed=0   ->  0 counts moved over 2s      (no motion at all)
+speed=30  ->  reached target, 0 error
+```
+
+`HLSCL::pack_goal` now substitutes `kDefaultSpeed` (60, ≈43.9 rpm — the value in
+FeeTech's own WritePos example) whenever speed is 0. Re-measured after the fix:
+
+```
+speed=0   ->  -150 -> -300, error 0 counts
+speed=30  ->  -300 -> -450, error 0 counts
+```
+
+Locked by `hls_zero_speed_is_replaced_with_a_moving_default`.
+
+### Reading positions — sign-magnitude, not two's complement
+
+HLS encodes negative positions as sign-magnitude with **bit 15** as the sign, so a
+raw `read_word(id, 56)` of `32918` (`0x8096`) is actually **−150**. Use
+`HLSCL::read_pos()`, which decodes it. A raw read will look like a wildly wrong
+position rather than a negative one.
+
 ### Step 1 — stop condition
 
 If firmware is **outside 3.40–3.59**, stop and report it. The resolver's central

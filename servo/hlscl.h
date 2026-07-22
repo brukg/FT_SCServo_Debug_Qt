@@ -59,6 +59,13 @@ namespace feetech_servo
 class HLSCL
 {
 public:
+    // SMS/STS treat Goal Velocity 0 as "no speed limit". HLS takes it literally
+    // and does not move -- measured on an HLS3955: speed 0 gave 0 counts over
+    // 2s, speed 30 reached target exactly. The debug tool's sweep, step and
+    // goal-slider paths all command 0, so a zero is substituted with this.
+    // 60 is the value in FeeTech's own WritePos example (~43.9 rpm).
+    static constexpr uint16_t kDefaultSpeed = 60;
+
     HLSCL(SCSerial *scserial) : scserial_(scserial) {}
 
 	int write_pos_ex(uint8_t ID, int16_t Position, uint16_t Speed, uint8_t ACC = 0, uint16_t Torque = 0)
@@ -177,7 +184,7 @@ private:
         buf[0] = ACC;
         scserial_->host_2_scs(buf+1, buf+2, Position);
         scserial_->host_2_scs(buf+3, buf+4, Torque);
-        scserial_->host_2_scs(buf+5, buf+6, Speed);
+        scserial_->host_2_scs(buf+5, buf+6, Speed ? Speed : kDefaultSpeed);
     }
 
     SCSerial *scserial_;

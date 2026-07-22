@@ -50,6 +50,7 @@ private slots:
 
     void hls_write_pos_ex_puts_torque_at_44_45();
     void hls_write_pos_ex_encodes_negative_position_as_sign_bit();
+    void hls_zero_speed_is_replaced_with_a_moving_default();
 };
 
 // Model and firmware numbers are packed (minor << 8 | major).
@@ -182,6 +183,25 @@ void TestPackets::hls_write_pos_ex_encodes_negative_position_as_sign_bit()
     const uint16_t expected = 1000 | (1 << 15);
     QCOMPARE(p[1], uint8_t(expected & 0xff));
     QCOMPARE(p[2], uint8_t(expected >> 8));
+}
+
+// Sweep, step and the goal slider all command speed 0, which on SMS/STS means
+// "no speed limit". HLS takes it literally: measured on an HLS3955, speed 0
+// produced 0 counts of motion over 2s, while speed 30 reached target exactly.
+// So a zero must be replaced with a usable default rather than passed through.
+void TestPackets::hls_zero_speed_is_replaced_with_a_moving_default()
+{
+    CapturingSerial serial;
+    feetech_servo::HLSCL hls(&serial);
+
+    hls.write_pos_ex(1, 2000, 0, 0, 500);
+
+    auto p = payload_of(serial.tx);
+    const uint16_t speed = uint16_t(p[5]) | (uint16_t(p[6]) << 8);
+    QVERIFY2(speed != 0,
+             "HLS Goal Velocity 0 means no motion. Sweep/step/slider pass 0, so "
+             "the control class must substitute a non-zero default.");
+    QCOMPARE(speed, uint16_t(feetech_servo::HLSCL::kDefaultSpeed));
 }
 
 QTEST_MAIN(TestPackets)
