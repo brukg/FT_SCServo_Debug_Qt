@@ -47,6 +47,9 @@ private slots:
     void resolver_uses_endianness_to_break_firmware_overlap();
     void resolver_fails_closed_on_unknown_model();
     void resolver_controls_unknown_model_with_known_firmware();
+
+    void hls_write_pos_ex_puts_torque_at_44_45();
+    void hls_write_pos_ex_encodes_negative_position_as_sign_bit();
 };
 
 // Model and firmware numbers are packed (minor << 8 | major).
@@ -141,6 +144,44 @@ void TestPackets::resolver_controls_unknown_model_with_known_firmware()
     QCOMPARE(p.series, feetech_servo::HLS);
     QVERIFY(p.known);
     QVERIFY(p.name.startsWith("Unknown"));
+}
+
+// THE regression lock. The original bug: the app sent 0 to addresses 44/45,
+// which on HLS is Goal Torque (max torque current, 6.5mA units). A zero current
+// limit means the servo cannot move. It must carry the requested torque.
+void TestPackets::hls_write_pos_ex_puts_torque_at_44_45()
+{
+    CapturingSerial serial;
+    feetech_servo::HLSCL hls(&serial);
+
+    hls.write_pos_ex(1, 4095, 60, 50, 500);
+
+    auto p = payload_of(serial.tx);
+    QCOMPARE(p.size(), size_t(7));
+    QCOMPARE(p[0], uint8_t(50));            // ACC           @41
+    QCOMPARE(p[1], uint8_t(4095 & 0xff));   // Position L    @42
+    QCOMPARE(p[2], uint8_t(4095 >> 8));     // Position H    @43
+    QCOMPARE(p[3], uint8_t(500 & 0xff));    // Goal Torque L @44
+    QCOMPARE(p[4], uint8_t(500 >> 8));      // Goal Torque H @45
+    QCOMPARE(p[5], uint8_t(60));            // Speed L       @46
+    QCOMPARE(p[6], uint8_t(0));             // Speed H       @47
+
+    QVERIFY2(!(p[3] == 0 && p[4] == 0),
+             "Goal Torque must never be zero-filled: a 0mA current limit "
+             "immobilises the servo. This was the original defect.");
+}
+
+void TestPackets::hls_write_pos_ex_encodes_negative_position_as_sign_bit()
+{
+    CapturingSerial serial;
+    feetech_servo::HLSCL hls(&serial);
+
+    hls.write_pos_ex(1, -1000, 60, 0, 500);
+
+    auto p = payload_of(serial.tx);
+    const uint16_t expected = 1000 | (1 << 15);
+    QCOMPARE(p[1], uint8_t(expected & 0xff));
+    QCOMPARE(p[2], uint8_t(expected >> 8));
 }
 
 QTEST_MAIN(TestPackets)

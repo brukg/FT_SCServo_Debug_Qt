@@ -16,4 +16,5 @@ HEADERS += \
     ../servo/scserial.h \
     ../servo/servo_types.h \
     ../servo/sms_sts.h \
-    ../servo/scscl.h
+    ../servo/scscl.h \
+    ../servo/hlscl.h

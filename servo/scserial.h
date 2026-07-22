@@ -93,5 +93,6 @@ protected:
 
 #include "sms_sts.h"
 #include "scscl.h"
+#include "hlscl.h"
 
 #endif // SCSERIAL_H
