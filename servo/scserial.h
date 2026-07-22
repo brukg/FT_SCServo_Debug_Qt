@@ -34,6 +34,7 @@ class SCSerial
 {
 public:
     SCSerial(QSerialPort *serial);
+    virtual ~SCSerial() = default;
 
     void set_end(uint8_t end) { end_ = end; }
 
@@ -47,9 +48,9 @@ public:
     int read_byte(uint8_t id, uint8_t mem_addr);
     int read_word(uint8_t id, uint8_t mem_addr);
     int ping(uint8_t id);
-	int write(uint8_t *n_dat, int n_len);
-	int read(uint8_t *n_dat, int n_len);
-	int write(uint8_t b_dat);
+	virtual int write(uint8_t *n_dat, int n_len);
+	virtual int read(uint8_t *n_dat, int n_len);
+	virtual int write(uint8_t b_dat);
 	void read_flush() { /* do not anything */ }
 	void write_flush() { /* do not anything */}
     int read_model_number(int id);
