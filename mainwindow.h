@@ -31,7 +31,7 @@ private:
 
     void setEnableComSettings(bool state);
     void clearServoList();
-    void appendServoList(const int id, const QString &name);
+    void appendServoList(const int id, const feetech_servo::ServoProfile &profile);
     void clearProgMemTable();
     void updatePorgMemTable();
     void setIntRangeLineEdit(QLineEdit *edit, int min, int max);
@@ -39,8 +39,10 @@ private:
 
     bool isServoValidNow() { return !(is_searching_ || !serial_->isOpen() || select_servo_.id_ < 0); }
 
-    void selectServoSeries(feetech_servo::ModelSeries series);
+    void applyServoProfile(const feetech_servo::ServoProfile &profile);
     const std::vector<feetech_servo::MemoryConfig>& getMemConfig(feetech_servo::ModelSeries series);
+    void writeGoal(int pos, int time, int speed, int acc, int torque);
+    int currentTorqueField() const;
 
     void writePos(int pos, int time, int speed, int acc);
     void syncWritePos(int pos, int time, int speed, int acc);
@@ -89,6 +91,7 @@ private:
     feetech_servo::SCSerial *scserial_;
     feetech_servo::SCSCL *scs_serial_;
     feetech_servo::SMS_STS *sms_sts_serial_;
+    feetech_servo::HLSCL *hls_serial_;
     QStandardItemModel *servo_list_model_;
     QStandardItemModel *prog_mem_model_;
     QTimer *port_search_timer_;
@@ -103,7 +106,7 @@ private:
     int search_id_ = 0;
     struct
     {
-        feetech_servo::ModelSeries model_;
+        feetech_servo::ServoProfile profile_;
         int id_ = -1;
     }select_servo_;
     enum Mode
