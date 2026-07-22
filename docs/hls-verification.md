@@ -1,8 +1,10 @@
 # HLS servo support — hardware verification
 
-Procedure for validating HLS support on real hardware. **Results are pending: no
-serial adapter was connected when the code was written, so nothing below has been
-executed against a servo.** Fill in the Result column as you go.
+Procedure for validating HLS support on real hardware.
+
+**Status: identification verified on hardware (2026-07-22). The motion test —
+step 3, the acceptance test — has NOT been run.** Nothing here may be described as
+working until a servo physically moves.
 
 ## Background
 
@@ -21,19 +23,45 @@ HLS uses the HLS map.
 
 ## Build
 
+From the repo root. `build/` is gitignored.
+
 ```bash
-cd <repo>
-mkdir -p /tmp/hls-build/app && cd /tmp/hls-build/app
-qmake <repo>/FT_SCServo_Debug_Qt.pro && make -j$(nproc)
+mkdir -p build && cd build && qmake .. && make -j$(nproc)
 ./FT_SCServo_Debug_Qt
 ```
 
 Unit tests (no hardware needed):
 
 ```bash
-mkdir -p /tmp/hls-build/tests && cd /tmp/hls-build/tests
-qmake <repo>/tests/tests.pro && make -j$(nproc) && ./test_packets
+mkdir -p build/tests && cd build/tests && qmake ../../tests/tests.pro && make -j$(nproc)
+./test_packets
 ```
+
+Read-only bus probe — pings every ID and reports what the resolver makes of each.
+Sends no writes, so it is safe to run at any time:
+
+```bash
+mkdir -p build/probe && cd build/probe && qmake ../../tools/probe.pro && make -j$(nproc)
+./probe_bus /dev/ttyACM0 1000000
+```
+
+## Finding the serial port
+
+Do **not** assume `/dev/ttyUSB*`. FeeTech's CH340/CH343 adapters enumerate as
+**CDC-ACM** on current kernels, appearing as `/dev/ttyACM0` with no `usbserial`
+driver involved. Enumerate by id instead, which works regardless of driver:
+
+```bash
+ls -l /dev/serial/by-id/
+```
+
+On this machine that resolves to:
+
+```
+usb-1a86_USB_Single_Serial_5B79079548-if00 -> ../../ttyACM0
+```
+
+(`1a86` is QinHeng, the CH34x vendor.)
 
 ## Safety
 
@@ -48,13 +76,42 @@ Steps 3 and 5 command a physical actuator.
 
 | # | Step | Expected | Result |
 |---|---|---|---|
-| 1 | Scan for servos. Capture the `qInfo` line from stdout. | Name is `HLS39xx`, **not** `Unknown`. Firmware major is 3, minor within 40–59. | ⬜ pending |
+| 1 | Scan for servos, capture model + firmware bytes. | Name is `HLS39xx`, **not** `Unknown`. Firmware major 3, minor within 40–59. | ✅ **pass** — see below |
 | 2 | Open the register view. Compare against FD 1.9.8.5 under Wine, side by side. | `Goal Torque` at addr 44; `Kp`/`Kd`/`Ki`/`Km` at 50–53; Work Mode max 4. | ⬜ pending |
-| 3 | **Set a goal position. Confirm the Torque field reads 500. Send.** | **The servo physically moves to the commanded position.** | ⬜ pending |
-| 4 | Repeat scan / read / move on an SCS servo and an STS servo. | Identical behaviour to before this change. | ⬜ pending |
-| 5 | On an SMS/SMCL servo, read Position Offset (addr 33). Compare with FD's reading. | They agree. | ⬜ pending |
-| 6 | Select a servo the tables do not know. | "Servo Control" group is **disabled** — no commands can be sent. | ⬜ pending |
-| 7 | Run the unit tests. | `Totals: 11 passed, 0 failed`. | ✅ passing (no hardware needed) |
+| 3 | **Set a goal position. Confirm the Torque field reads 500. Send.** | **The servo physically moves to the commanded position.** | ⬜ pending — requires operator present |
+| 4 | Repeat scan / read / move on an SCS servo and an STS servo. | Identical behaviour to before this change. | ⬜ pending — no SCS/STS servo on this bus |
+| 5 | On an SMS/SMCL servo, read Position Offset (addr 33). Compare with FD's reading. | They agree. | ⬜ pending — no SMS servo on this bus |
+| 6 | Select a servo the tables do not know. | Register map still resolves from firmware; control stays enabled. | ✅ **pass** — ID 4 is exactly this case |
+| 7 | Run the unit tests. | `Totals: 11 passed, 0 failed`. | ✅ pass |
+
+### Step 1 result — measured 2026-07-22 on `/dev/ttyACM0` @ 1 Mbps
+
+```
+ID 1  model=0x130a (major 10, minor 19)  firmware=0x2b03 (3.43)  -> HLS3955           series=HLS known=yes
+      pos=3083 volt=117 temp=28 mode=0 torque_en=1 goal_torque(44)=0
+ID 2  model=0x140a (major 10, minor 20)  firmware=0x2b03 (3.43)  -> HLS3915           series=HLS known=yes
+      pos=4095 volt=117 temp=33 mode=0 torque_en=0 goal_torque(44)=500
+ID 4  model=0x1b0a (major 10, minor 27)  firmware=0x2d03 (3.45)  -> Unknown (fw 3.45)  series=HLS known=yes
+      pos=4078 volt=118 temp=33 mode=0 torque_en=0 goal_torque(44)=450
+```
+
+Firmware 3.43 and 3.45 both fall inside 3.40–3.59, confirming on real hardware the
+assumption the whole resolver rests on.
+
+**ID 1 shows the original defect in the servo's own registers**: torque enabled,
+goal torque 0. That is the state the Qt tool left servos in — energised, with a
+0 mA current limit, unable to move.
+
+### Step 6 result — model newer than FD's own table
+
+ID 4 reports model minor **27**, which is absent from FD 1.9.8.5's `[型号]` table
+(it stops at 25). FeeTech shipped a servo newer than their own debug tool.
+
+Because the register map is keyed off firmware rather than the name, ID 4 still
+resolves to the HLS map and **remains controllable**, displayed as
+`Unknown (fw 3.45)`. Under the previous name-matching logic it would have fallen
+through to SMCL and been silently mis-driven. This is the case that justified
+firmware-keyed resolution over simply extending the model list.
 
 ### Step 1 — stop condition
 
