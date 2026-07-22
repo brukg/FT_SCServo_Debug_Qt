@@ -21,10 +21,18 @@ struct FirmwareProfile
 };
 
 // From setup.log [debug]. Firmware 3.20-3.39 appears twice, disambiguated by `end`.
+//
+// The 260623 ft_setup_bat also defines firmware families 5.x (CWSXX), 6.x
+// (LYNODE), 7.x (CWSR) and 8.x (TTSD). They are deliberately absent here: no
+// register tables have been ported for them, so they resolve as unknown and
+// fail closed rather than being driven through a guessed map.
 const std::vector<FirmwareProfile> firmware_profiles =
 {
     { 0,  0, 39, 1, feetech_servo::SCS  },
     { 1,  0, 19, 0, feetech_servo::SMCL },
+    // 1.20-1.39 is present in the 250729 config and dropped in 260623. Kept,
+    // because retaining it can only let an older SMCL servo resolve, whereas
+    // dropping it would regress one to fail-closed.
     { 1, 20, 39, 0, feetech_servo::SMCL },
     { 2, 40, 69, 0, feetech_servo::SMBL },
     { 3,  0, 39, 0, feetech_servo::STS  },
@@ -37,11 +45,18 @@ const std::map<uint16_t, ModelEntry> &model_list()
 {
     static const std::map<uint16_t, ModelEntry> list =
     {
+        SERVO_MODEL(1, 1, "TTL-Node-A", 0),
         SERVO_MODEL(5, 0, "SCSXX", 1),
+        SERVO_MODEL(5, 1, "SCS0002", 1),
+        SERVO_MODEL(5, 2, "SCS0037", 1),
         SERVO_MODEL(5, 3, "SCS2304", 1),
         SERVO_MODEL(5, 4, "SCS009", 1),
         SERVO_MODEL(5, 5, "SCS1025", 1),
+        SERVO_MODEL(5, 6, "SCS0018", 1),
+        SERVO_MODEL(5, 7, "SCS0017", 1),
         SERVO_MODEL(5, 8, "SCS2332", 1),
+        SERVO_MODEL(5, 9, "SCS0005", 1),
+        SERVO_MODEL(5, 10, "SCS0043", 1),
         SERVO_MODEL(5, 12, "SCS45", 1),
         SERVO_MODEL(5, 15, "SCS15", 1),
         SERVO_MODEL(5, 16, "SCS315", 1),
@@ -49,45 +64,31 @@ const std::map<uint16_t, ModelEntry> &model_list()
         SERVO_MODEL(5, 35, "SCS215", 1),
         SERVO_MODEL(5, 40, "SCS40", 1),
         SERVO_MODEL(5, 60, "SCS6560", 1),
-        SERVO_MODEL(6, 0, "SM60-360M", 0),
-        SERVO_MODEL(6, 1, "SM60-360M", 0),
-        SERVO_MODEL(6, 2, "SM60-360M", 0),
-        SERVO_MODEL(6, 3, "SM60-360M", 0),
-        SERVO_MODEL(6, 4, "SM60-360M", 0),
-        SERVO_MODEL(6, 5, "SM60-360M", 0),
-        SERVO_MODEL(6, 6, "SM60-360M", 0),
-        SERVO_MODEL(6, 7, "SM60-360M", 0),
+        SERVO_MODEL(6, 0, "SMXX-360M", 0),
+        SERVO_MODEL(6, 4, "SM30-360M", 0),
         SERVO_MODEL(6, 8, "SM60-360M", 0),
         SERVO_MODEL(6, 12, "SM80-360M", 0),
         SERVO_MODEL(6, 16, "SM100-360M", 0),
         SERVO_MODEL(6, 20, "SM150-360M", 0),
         SERVO_MODEL(6, 24, "SM85-360M", 0),
         SERVO_MODEL(6, 26, "SM60-360M", 0),
-        SERVO_MODEL(8, 0, "SM30BL", 0),
-        SERVO_MODEL(8, 1, "SM30BL", 0),
-        SERVO_MODEL(8, 2, "SM30BL", 0),
-        SERVO_MODEL(8, 3, "SM30BL", 0),
-        SERVO_MODEL(8, 4, "SM30BL", 0),
-        SERVO_MODEL(8, 5, "SM30BL", 0),
-        SERVO_MODEL(8, 6, "SM30BL", 0),
-        SERVO_MODEL(8, 7, "SM30BL", 0),
-        SERVO_MODEL(8, 8, "SM30BL", 0),
-        SERVO_MODEL(8, 9, "SM30BL", 0),
         SERVO_MODEL(8, 10, "SM30BL", 0),
         SERVO_MODEL(8, 16, "SM100-360M", 0),
         SERVO_MODEL(8, 20, "SM150-360M", 0),
         SERVO_MODEL(8, 24, "SM24BL", 0),
         SERVO_MODEL(8, 25, "SM70BLHV", 0),
-        SERVO_MODEL(8, 29, "SM29BL(FT)", 0),
-        SERVO_MODEL(8, 30, "SM30BL(FT)", 0),
+        SERVO_MODEL(8, 29, "SM29BL", 0),
+        SERVO_MODEL(8, 30, "SM30BL", 0),
         SERVO_MODEL(8, 40, "SM40BLHV", 0),
         SERVO_MODEL(8, 41, "SM80BLHV", 0),
         SERVO_MODEL(8, 42, "SM45BLHV", 0),
         SERVO_MODEL(8, 44, "SM85BLHV", 0),
         SERVO_MODEL(8, 81, "SM160BLHV", 0),
+        SERVO_MODEL(8, 105, "SM105BLHV", 0),
         SERVO_MODEL(8, 120, "SM120BLHV", 0),
         SERVO_MODEL(8, 121, "SM260BLHV", 0),
         SERVO_MODEL(8, 220, "SM200BLHV", 0),
+        SERVO_MODEL(8, 224, "SM224BLHV", 0),
         SERVO_MODEL(9, 0, "STSXX", 0),
         SERVO_MODEL(9, 1, "STS3015", 0),
         SERVO_MODEL(9, 2, "STS3032", 0),
@@ -100,6 +101,8 @@ const std::map<uint16_t, ModelEntry> &model_list()
         SERVO_MODEL(9, 9, "STS3095", 0),
         SERVO_MODEL(9, 10, "STS3095", 0),
         SERVO_MODEL(9, 11, "STS3250", 0),
+        SERVO_MODEL(9, 12, "STS3036", 0),
+        SERVO_MODEL(9, 13, "STS3120", 0),
         SERVO_MODEL(9, 15, "SCS15-2", 1),
         SERVO_MODEL(9, 20, "SCSXX-2", 1),
         SERVO_MODEL(9, 25, "SCS215-2", 1),
@@ -129,7 +132,18 @@ const std::map<uint16_t, ModelEntry> &model_list()
         SERVO_MODEL(10, 20, "HLS3915", 0),
         SERVO_MODEL(10, 21, "HLS3615", 0),
         SERVO_MODEL(10, 22, "HLS3960", 0),
+        SERVO_MODEL(10, 23, "HLS3608", 0),
+        SERVO_MODEL(10, 24, "HLS3604", 0),
         SERVO_MODEL(10, 25, "STS3025BL", 0),
+        SERVO_MODEL(10, 26, "STS3200BL", 0),
+        SERVO_MODEL(10, 27, "HLS2915", 0),
+        SERVO_MODEL(10, 28, "HLS3906", 0),
+        SERVO_MODEL(10, 29, "HLS2606", 0),
+        SERVO_MODEL(11, 1, "SWS3225", 0),
+        SERVO_MODEL(11, 101, "TTL_E02", 0),
+        SERVO_MODEL(11, 102, "TTL_E02", 0),
+        SERVO_MODEL(12, 1, "SR3307", 0),
+        SERVO_MODEL(13, 1, "TTL_SD01", 0),
     };
     return list;
 }

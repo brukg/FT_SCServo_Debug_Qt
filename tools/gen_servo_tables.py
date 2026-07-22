@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Generate FT_SCServo_Debug_Qt register tables from FD 1.9.8.5's setup.log.
+"""Generate FT_SCServo_Debug_Qt register tables from FeeTech's ft_setup_bat config.
 
 FD is data-driven: it parses ft_setup_bat/setup.log at startup to learn every
-servo's register map. This script transcribes that data into the C++ tables the
-Qt tool uses, so the two stay in agreement without hand-copying ~400 values.
+servo's register map and model name. This script transcribes that data into the
+C++ tables the Qt tool uses, so the two stay in agreement without hand-copying
+~400 values.
+
+IMPORTANT -- use the newest ft_setup_bat package you have, NOT the copy bundled
+inside an FD release. ft_setup_bat ships separately and is updated far more
+often than FD itself. The 260623 package names model 10.27 (HLS2915) and four
+other servos that the copy bundled with FD 1.9.8.5 (250729) does not, so
+generating from the bundled copy makes recent servos show as "Unknown" even
+though a stock FD install names them correctly.
 
 Reconciliation policy (see docs/superpowers/specs/2026-07-22-hls-servo-support-design.md):
 CN (setup.log) is authoritative for structure, sizes, direction bits, ranges and
@@ -28,7 +36,10 @@ TABLES = {
 
 # EN name is wrong or missing; CN semantics win. Keyed (firmware_key, address).
 NAME_OVERRIDES = {
-    ('3,40,59,0', 44): 'Goal Torque',            # EN says "Goal PWM" (copy-paste from STS)
+    ('3,40,59,0', 44): 'Goal Current',           # EN says "Goal PWM" +-32766; CN says
+                                                 # 目标电流 +-2048. Max torque current,
+                                                 # 6.5mA units. Wrong in EN in both the
+                                                 # 250729 and 260623 packages.
     ('0,0,39,1', 18):  'Phase',                  # absent from EN
     ('3,20,39,1', 34): 'Position Offset Value',  # absent from EN
     ('3,20,39,1', 44): 'Goal PWM',               # EN says "Running Time"
