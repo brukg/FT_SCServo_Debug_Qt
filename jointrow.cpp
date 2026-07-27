@@ -43,9 +43,9 @@ JointRow::JointRow(uint8_t id, const feetech_servo::ServoProfile &profile,
         present_->setText(QString("pos: %1").arg(initialPos));
 
     sync_ = new QCheckBox("Sync", this);
-    sync_->setToolTip("Armed: this joint moves only on the Sync Write button, "
-                      "together with other armed joints.\n"
-                      "Unarmed: dragging the slider jogs this joint live.");
+    sync_->setToolTip("Include this joint in Sync Write: pressing Sync Write sends the\n"
+                      "master Goal value to every checked joint in one command.\n"
+                      "The slider always jogs this joint individually, live.");
 
     auto *lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 2, 4, 2);
@@ -106,10 +106,7 @@ void JointRow::onSliderMoved(int v)
     suppress_ = true;
     spin_->setValue(v);           // keep spin in sync
     suppress_ = false;
-    // Armed for sync: only set the target; motion waits for the Sync Write button.
-    // Unarmed: jog this joint live so you can position it individually.
-    if(!isSyncArmed())
-        emit jogged(id_, v);
+    emit jogged(id_, v);          // live jog of this one joint
 }
 
 void JointRow::onSpinChanged(int v)
@@ -119,6 +116,5 @@ void JointRow::onSpinChanged(int v)
     suppress_ = true;
     slider_->setValue(v);
     suppress_ = false;
-    if(!isSyncArmed())
-        emit jogged(id_, v);
+    emit jogged(id_, v);
 }

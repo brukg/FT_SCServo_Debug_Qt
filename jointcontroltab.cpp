@@ -17,7 +17,10 @@ JointControlTab::JointControlTab(QWidget *parent)
     auto *torqueOn  = new QPushButton("Torque ON All", this);
     auto *selectAll = new QPushButton("Select-all Sync", this);
     selectAll->setCheckable(true);
-    auto *syncWrite = new QPushButton("Sync Write", this);
+
+    goal_   = new QSpinBox(this); goal_->setRange(0, 4095); goal_->setValue(2048);
+    auto *syncWrite = new QPushButton("Sync Write → Goal", this);
+    syncWrite->setToolTip("Write the Goal value to every Sync-checked joint, in one command.");
 
     speed_  = new QSpinBox(this); speed_->setRange(0, 65535); speed_->setValue(600);
     acc_    = new QSpinBox(this); acc_->setRange(0, 255);     acc_->setValue(50);
@@ -27,9 +30,10 @@ JointControlTab::JointControlTab(QWidget *parent)
     bar->addWidget(torqueOff);
     bar->addWidget(torqueOn);
     bar->addWidget(selectAll);
-    bar->addWidget(syncWrite);
     bar->addStretch(1);
-    bar->addWidget(new QLabel("speed", this));  bar->addWidget(speed_);
+    bar->addWidget(new QLabel("Goal", this));   bar->addWidget(goal_);
+    bar->addWidget(syncWrite);
+    bar->addWidget(new QLabel("  speed", this)); bar->addWidget(speed_);
     bar->addWidget(new QLabel("acc", this));    bar->addWidget(acc_);
     bar->addWidget(new QLabel("torque", this)); bar->addWidget(torque_);
 
@@ -129,9 +133,12 @@ void JointControlTab::onSelectAllSync(bool on)
 
 void JointControlTab::onSyncWriteClicked()
 {
+    // Sync Write sends the SAME master Goal value to every armed joint, in one
+    // command per series. (Per-joint live positioning is the row sliders.)
+    const int goal = goal_->value();
     std::vector<feetech_servo::GroupTarget> armed;
     for(auto *r : rows_)
         if(r->isSyncArmed() && r->profile().known)
-            armed.push_back({r->id(), r->profile(), r->target()});
+            armed.push_back({r->id(), r->profile(), goal});
     emit syncWriteRequested(armed);
 }

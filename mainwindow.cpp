@@ -64,6 +64,17 @@ void MainWindow::populateJointTab()
     }
     if(joint_tab_)
         joint_tab_->setServos(discovered_);
+
+    // Reflect each servo's ACTUAL torque-enable state (register 40) into the row
+    // checkboxes, so the UI never claims torque is off when the servo has it on.
+    for(auto &d : discovered_)
+    {
+        if(!d.profile.known || !serial_->isOpen())
+            continue;
+        int te = scserial_->read_byte(d.id, 40);
+        if(te >= 0)
+            joint_tab_->reflectTorque(d.id, te != 0);
+    }
 }
 
 void MainWindow::setupJointControl()

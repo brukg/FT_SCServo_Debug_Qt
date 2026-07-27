@@ -52,6 +52,7 @@ private:
 
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
+    QSpinBox *goal_ = nullptr;
     QSpinBox *speed_ = nullptr;
     QSpinBox *acc_ = nullptr;
     QSpinBox *torque_ = nullptr;
