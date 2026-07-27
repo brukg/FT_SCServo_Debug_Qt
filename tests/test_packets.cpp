@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <vector>
 #include "servo/scserial.h"
+#include "servo/servo_dispatch.h"
 
 // Test double: captures every byte the servo layer would put on the wire.
 // Passing nullptr for the QSerialPort is safe because all IO is overridden.
@@ -51,7 +52,30 @@ private slots:
     void hls_write_pos_ex_puts_torque_at_44_45();
     void hls_write_pos_ex_encodes_negative_position_as_sign_bit();
     void hls_zero_speed_is_replaced_with_a_moving_default();
+
+    void dispatch_write_goal_routes_by_series();
+    void dispatch_enable_torque_routes_by_series();
+    void sync_group_all_hls_emits_one_packet_with_torque();
+    void sync_group_mixed_series_emits_one_packet_per_series();
 };
+
+// Build a known ServoProfile for a given series.
+static feetech_servo::ServoProfile prof(feetech_servo::ModelSeries s, uint8_t end = 0)
+{
+    feetech_servo::ServoProfile p;
+    p.name = "test"; p.series = s; p.end = end; p.known = true;
+    return p;
+}
+
+// Count SYNC WRITE packets (instruction byte 0x83 at offset 4 of each frame).
+static int count_sync_packets(const std::vector<uint8_t> &tx)
+{
+    int n = 0;
+    for (size_t i = 0; i + 4 < tx.size(); i++)
+        if (tx[i] == 0xff && tx[i+1] == 0xff && tx[i+4] == 0x83)
+            n++;
+    return n;
+}
 
 // Model and firmware numbers are packed (minor << 8 | major).
 static uint16_t mk(uint8_t major, uint8_t minor) { return (uint16_t)((minor << 8) | major); }
@@ -202,6 +226,112 @@ void TestPackets::hls_zero_speed_is_replaced_with_a_moving_default()
              "HLS Goal Velocity 0 means no motion. Sweep/step/slider pass 0, so "
              "the control class must substitute a non-zero default.");
     QCOMPARE(speed, uint16_t(feetech_servo::HLSCL::kDefaultSpeed));
+}
+
+// write_goal_for must call the class matching the servo's series.
+void TestPackets::dispatch_write_goal_routes_by_series()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    SCSCL scs(&serial); SMS_STS sms(&serial); HLSCL hls(&serial);
+
+    // HLS -> torque carried at bytes 44/45 (7-byte payload at addr 41)
+    serial.tx.clear();
+    write_goal_for(&scs, &sms, &hls, 1, prof(HLS), 4095, 60, 50, 500);
+    {
+        // last WRITE frame is the position write (servo_mode writes a byte first)
+        // find the 7-byte-payload frame at addr 41
+        bool found = false;
+        for (size_t i = 0; i + 6 < serial.tx.size(); i++)
+            if (serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
+                serial.tx[i+3] == 10 && serial.tx[i+4] == 0x03 && serial.tx[i+5] == 41)
+            {
+                QCOMPARE(serial.tx[i+6+3], uint8_t(500 & 0xff)); // torque L @44
+                QCOMPARE(serial.tx[i+6+4], uint8_t(500 >> 8));   // torque H @45
+                found = true;
+            }
+        QVERIFY2(found, "HLS position write frame at addr 41 not found");
+    }
+
+    // SCS -> write at addr 42, range semantics differ; just confirm a frame at 42
+    serial.tx.clear();
+    write_goal_for(&scs, &sms, &hls, 2, prof(SCS, 1), 512, 60, 0, 0);
+    {
+        bool at42 = false;
+        for (size_t i = 0; i + 5 < serial.tx.size(); i++)
+            if (serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
+                serial.tx[i+4] == 0x03 && serial.tx[i+5] == 42)
+                at42 = true;
+        QVERIFY2(at42, "SCS position write should target addr 42");
+    }
+}
+
+void TestPackets::dispatch_enable_torque_routes_by_series()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    SCSCL scs(&serial); SMS_STS sms(&serial); HLSCL hls(&serial);
+
+    serial.tx.clear();
+    enable_torque_for(&scs, &sms, &hls, 5, prof(HLS), true);
+    // torque enable is a 1-byte write at addr 40
+    bool at40 = false;
+    for (size_t i = 0; i + 6 < serial.tx.size(); i++)
+        if (serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
+            serial.tx[i+2] == 5 && serial.tx[i+4] == 0x03 && serial.tx[i+5] == 40)
+        {
+            QCOMPARE(serial.tx[i+6], uint8_t(1)); // enable = 1
+            at40 = true;
+        }
+    QVERIFY2(at40, "torque enable should be a write to addr 40");
+
+    // fail-closed servo: no bytes emitted
+    serial.tx.clear();
+    ServoProfile unknown; unknown.known = false; unknown.series = UNKNOWN;
+    enable_torque_for(&scs, &sms, &hls, 9, unknown, true);
+    QVERIFY2(serial.tx.empty(), "unknown servo must not be written to");
+}
+
+// All-HLS group -> exactly one sync packet, torque present.
+void TestPackets::sync_group_all_hls_emits_one_packet_with_torque()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    SCSCL scs(&serial); SMS_STS sms(&serial); HLSCL hls(&serial);
+
+    std::vector<GroupTarget> g = {
+        {1, prof(HLS), 1000},
+        {2, prof(HLS), 2000},
+        {3, prof(HLS), 3000},
+    };
+    sync_write_group(&scs, &sms, &hls, g, 60, 50, 500);
+
+    QCOMPARE(count_sync_packets(serial.tx), 1);
+    // torque bytes (500) must appear in the sync payload; a zero-torque bug would not
+    bool torque_seen = false;
+    for (size_t i = 0; i + 1 < serial.tx.size(); i++)
+        if (serial.tx[i] == uint8_t(500 & 0xff) && serial.tx[i+1] == uint8_t(500 >> 8))
+            torque_seen = true;
+    QVERIFY2(torque_seen, "HLS sync write must carry the group torque");
+}
+
+// Mixed HLS + STS -> one packet per series (two total).
+void TestPackets::sync_group_mixed_series_emits_one_packet_per_series()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    SCSCL scs(&serial); SMS_STS sms(&serial); HLSCL hls(&serial);
+
+    std::vector<GroupTarget> g = {
+        {1, prof(HLS), 1000},
+        {2, prof(STS), 2000},
+        {3, prof(HLS), 3000},
+        {4, prof(STS), 1500},
+    };
+    sync_write_group(&scs, &sms, &hls, g, 60, 50, 500);
+
+    // one HLS packet + one STS packet
+    QCOMPARE(count_sync_packets(serial.tx), 2);
 }
 
 QTEST_MAIN(TestPackets)

@@ -7,11 +7,14 @@
 #include <QTableView>
 #include <QStandardItemModel>
 #include "servo/scserial.h"
+#include "servo/servo_dispatch.h"
 #include <map>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
+
+class JointControlTab;
 
 class MainWindow : public QMainWindow
 {
@@ -28,6 +31,7 @@ private:
     void setupAutoDebug();
     void setupDataAnalysis();
     void setupProgramming();
+    void setupJointControl();
 
     void setEnableComSettings(bool state);
     void clearServoList();
@@ -84,7 +88,17 @@ private slots:
     void onGraphTimerTimeout();
     void onServoReadTimerTimeout();
 
+    // joint control tab
+    void onJointTorqueToggled(uint8_t id, bool on);
+    void onJointJogged(uint8_t id, int target);
+    void onJointTorqueAll(bool on);
+    void onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> &armed);
+    void onJointPollTick();
+    void onTabChanged(int index);
+
 private:
+    const feetech_servo::ServoProfile *profileForId(uint8_t id) const;
+
     Ui::MainWindow *ui;
     QTimer *graph_timer_;
     QSerialPort *serial_;
@@ -103,6 +117,9 @@ private:
 
     bool is_searching_ = false;
     std::vector<uint8_t> id_list_;
+    std::vector<feetech_servo::GroupTarget> discovered_;  // id + profile, for the Joint Control tab
+    JointControlTab *joint_tab_ = nullptr;
+    size_t joint_poll_cursor_ = 0;                        // round-robin index for present-position reads
     int search_id_ = 0;
     struct
     {

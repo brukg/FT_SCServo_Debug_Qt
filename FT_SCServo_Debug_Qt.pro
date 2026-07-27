@@ -12,7 +12,9 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     servo/scserial.cpp \
-    simpegraphwiget.cpp
+    simpegraphwiget.cpp \
+    jointrow.cpp \
+    jointcontroltab.cpp
 
 HEADERS += \
     mainwindow.h \
@@ -21,7 +23,10 @@ HEADERS += \
     servo/sms_sts.h \
     servo/scscl.h \
     servo/hlscl.h \
-    simpegraphwiget.h
+    servo/servo_dispatch.h \
+    simpegraphwiget.h \
+    jointrow.h \
+    jointcontroltab.h
 
 FORMS += \
     mainwindow.ui

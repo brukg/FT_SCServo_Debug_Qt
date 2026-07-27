@@ -1,9 +1,11 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "jointcontroltab.h"
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QTimer>
 #include <QTableView>
+#include <QTabWidget>
 #include <QScrollBar>
 #include <QStandardItemModel>
 #include <QtCore/QDebug>
@@ -38,9 +40,94 @@ MainWindow::MainWindow(QWidget *parent)
     setupDataAnalysis();
 
     setupProgramming();
+    setupJointControl();
 
     setIntRangeLineEdit(ui->upLimitLineEdit, 0, 1200);
     setIntRangeLineEdit(ui->downLimitLineEdit, 0, 1200);
+}
+
+void MainWindow::setupJointControl()
+{
+    joint_tab_ = new JointControlTab(this);
+    ui->tabWidget->addTab(joint_tab_, "Joint Control");
+
+    connect(joint_tab_, &JointControlTab::torqueToggled,      this, &MainWindow::onJointTorqueToggled);
+    connect(joint_tab_, &JointControlTab::jogged,             this, &MainWindow::onJointJogged);
+    connect(joint_tab_, &JointControlTab::torqueAllRequested, this, &MainWindow::onJointTorqueAll);
+    connect(joint_tab_, &JointControlTab::syncWriteRequested, this, &MainWindow::onJointSyncWrite);
+    connect(joint_tab_, &JointControlTab::pollTick,           this, &MainWindow::onJointPollTick);
+    connect(ui->tabWidget, &QTabWidget::currentChanged,       this, &MainWindow::onTabChanged);
+}
+
+const feetech_servo::ServoProfile *MainWindow::profileForId(uint8_t id) const
+{
+    for(const auto &d : discovered_)
+        if(d.id == id)
+            return &d.profile;
+    return nullptr;
+}
+
+void MainWindow::onJointTorqueToggled(uint8_t id, bool on)
+{
+    if(const auto *p = profileForId(id))
+        feetech_servo::enable_torque_for(scs_serial_, sms_sts_serial_, hls_serial_, id, *p, on);
+}
+
+void MainWindow::onJointJogged(uint8_t id, int target)
+{
+    if(const auto *p = profileForId(id))
+        feetech_servo::write_goal_for(scs_serial_, sms_sts_serial_, hls_serial_,
+                                      id, *p, target,
+                                      joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
+}
+
+void MainWindow::onJointTorqueAll(bool on)
+{
+    for(const auto &d : discovered_)
+    {
+        feetech_servo::enable_torque_for(scs_serial_, sms_sts_serial_, hls_serial_, d.id, d.profile, on);
+        joint_tab_->reflectTorque(d.id, on);
+    }
+}
+
+void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> &armed)
+{
+    if(armed.empty())
+    {
+        ui->ServoSearchText->setText("Sync Write: no joints armed");
+        return;
+    }
+    feetech_servo::sync_write_group(scs_serial_, sms_sts_serial_, hls_serial_,
+                                    armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
+}
+
+void MainWindow::onJointPollTick()
+{
+    // Round-robin one servo per tick so a large bus is not saturated at 1 Mbaud.
+    if(discovered_.empty() || !serial_->isOpen() || is_searching_)
+        return;
+    if(joint_poll_cursor_ >= discovered_.size())
+        joint_poll_cursor_ = 0;
+
+    const auto &d = discovered_[joint_poll_cursor_];
+    int pos = -1;
+    if(d.profile.known)
+    {
+        if(d.profile.series == feetech_servo::HLS)
+            pos = hls_serial_->read_pos(d.id);
+        else
+            pos = scserial_->read_word(d.id, 56);   // present position register
+    }
+    joint_tab_->setPresentPosition(d.id, pos);
+    joint_poll_cursor_++;
+}
+
+void MainWindow::onTabChanged(int index)
+{
+    // Enable present-position polling only while the Joint Control tab is showing.
+    const bool jointActive = (joint_tab_ && ui->tabWidget->widget(index) == joint_tab_);
+    if(joint_tab_)
+        joint_tab_->setPollActive(jointActive);
 }
 
 MainWindow::~MainWindow()
@@ -435,6 +522,7 @@ void MainWindow::onSearchButtonClicked()
         ui->SearchButton->setText("Stop");
         clearServoList();
         id_list_.clear();
+        discovered_.clear();
         search_id_ = 0;
         search_timer_->start(10);
         onSearchTimerTimeout();
@@ -444,6 +532,8 @@ void MainWindow::onSearchButtonClicked()
         ui->SearchButton->setText("Search");
         search_timer_->stop();
         ui->ServoSearchText->setText(QString("Stop"));
+        if(joint_tab_)
+            joint_tab_->setServos(discovered_);   // populate Joint Control rows
     }
 }
 
@@ -458,6 +548,8 @@ void MainWindow::onSearchTimerTimeout()
         is_searching_ = false;
         ui->SearchButton->setText("Search");
         ui->ServoSearchText->setText("Stop");
+        if(joint_tab_)
+            joint_tab_->setServos(discovered_);   // populate Joint Control rows
     }
     else
     {
@@ -476,6 +568,7 @@ void MainWindow::onSearchTimerTimeout()
 
             appendServoList(ret, profile);
             id_list_.push_back(ret);
+            discovered_.push_back({(uint8_t)ret, profile, 0});
             select_servo_.id_ = ret;
             applyServoProfile(profile);
         }

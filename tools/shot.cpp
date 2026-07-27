@@ -9,7 +9,7 @@ int main(int argc, char *argv[]){
       printf("REQUIRED minimumSizeHint = %dx%d\n",
              w.minimumSizeHint().width(), w.minimumSizeHint().height()); }
     for(int i=2;i+1<argc;i+=2){
-        for(int tab=0; tab<2; tab++){
+        for(int tab=0; tab<3; tab++){
             MainWindow w; w.resize(QString(argv[i]).toInt(), QString(argv[i+1]).toInt());
             if(auto *tw = w.findChild<QTabWidget*>("tabWidget")) tw->setCurrentIndex(tab);
             w.show(); QApplication::processEvents();
