@@ -46,6 +46,26 @@ MainWindow::MainWindow(QWidget *parent)
     setIntRangeLineEdit(ui->downLimitLineEdit, 0, 1200);
 }
 
+void MainWindow::populateJointTab()
+{
+    // Read each discovered servo's present position so the Joint Control adjusters
+    // start where the joints actually are, not at 0.
+    for(auto &d : discovered_)
+    {
+        int pos = -1;
+        if(d.profile.known && serial_->isOpen())
+        {
+            if(d.profile.series == feetech_servo::HLS)
+                pos = hls_serial_->read_pos(d.id);
+            else
+                pos = scserial_->read_word(d.id, 56);
+        }
+        d.pos = pos;
+    }
+    if(joint_tab_)
+        joint_tab_->setServos(discovered_);
+}
+
 void MainWindow::setupJointControl()
 {
     joint_tab_ = new JointControlTab(this);
@@ -532,8 +552,7 @@ void MainWindow::onSearchButtonClicked()
         ui->SearchButton->setText("Search");
         search_timer_->stop();
         ui->ServoSearchText->setText(QString("Stop"));
-        if(joint_tab_)
-            joint_tab_->setServos(discovered_);   // populate Joint Control rows
+        populateJointTab();
     }
 }
 
@@ -548,8 +567,7 @@ void MainWindow::onSearchTimerTimeout()
         is_searching_ = false;
         ui->SearchButton->setText("Search");
         ui->ServoSearchText->setText("Stop");
-        if(joint_tab_)
-            joint_tab_->setServos(discovered_);   // populate Joint Control rows
+        populateJointTab();
     }
     else
     {

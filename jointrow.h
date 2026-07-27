@@ -20,7 +20,10 @@ class JointRow : public QWidget
 {
     Q_OBJECT
 public:
-    JointRow(uint8_t id, const feetech_servo::ServoProfile &profile, QWidget *parent = nullptr);
+    // initialPos: the servo's present position at build time, so the adjuster
+    // starts where the joint actually is (not at 0). -1 if it could not be read.
+    JointRow(uint8_t id, const feetech_servo::ServoProfile &profile,
+             int initialPos, QWidget *parent = nullptr);
 
     uint8_t id() const { return id_; }
     const feetech_servo::ServoProfile &profile() const { return profile_; }

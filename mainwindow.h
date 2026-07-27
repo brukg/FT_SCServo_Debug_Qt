@@ -32,6 +32,7 @@ private:
     void setupDataAnalysis();
     void setupProgramming();
     void setupJointControl();
+    void populateJointTab();
 
     void setEnableComSettings(bool state);
     void clearServoList();

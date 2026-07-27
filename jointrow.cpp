@@ -7,10 +7,13 @@
 #include <QSpinBox>
 #include <QLabel>
 
-JointRow::JointRow(uint8_t id, const feetech_servo::ServoProfile &profile, QWidget *parent)
+JointRow::JointRow(uint8_t id, const feetech_servo::ServoProfile &profile,
+                   int initialPos, QWidget *parent)
     : QWidget(parent), id_(id), profile_(profile)
 {
     const int pos_max = feetech_servo::position_max_for(profile_.series);
+    // Start the adjuster at the servo's current position so nothing jumps to 0.
+    const int startPos = (initialPos < 0) ? 0 : qBound(0, initialPos, pos_max);
 
     auto *idLabel = new QLabel(QString::number(id_), this);
     idLabel->setMinimumWidth(30);
@@ -31,7 +34,18 @@ JointRow::JointRow(uint8_t id, const feetech_servo::ServoProfile &profile, QWidg
     present_ = new QLabel("pos: --", this);
     present_->setMinimumWidth(80);
 
+    // Initialize the adjuster to the present position without emitting a jog.
+    suppress_ = true;
+    slider_->setValue(startPos);
+    spin_->setValue(startPos);
+    suppress_ = false;
+    if(initialPos >= 0)
+        present_->setText(QString("pos: %1").arg(initialPos));
+
     sync_ = new QCheckBox("Sync", this);
+    sync_->setToolTip("Armed: this joint moves only on the Sync Write button, "
+                      "together with other armed joints.\n"
+                      "Unarmed: dragging the slider jogs this joint live.");
 
     auto *lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 2, 4, 2);
@@ -90,9 +104,12 @@ void JointRow::onSliderMoved(int v)
     if(suppress_)
         return;
     suppress_ = true;
-    spin_->setValue(v);           // keep spin in sync without re-jogging
+    spin_->setValue(v);           // keep spin in sync
     suppress_ = false;
-    emit jogged(id_, v);
+    // Armed for sync: only set the target; motion waits for the Sync Write button.
+    // Unarmed: jog this joint live so you can position it individually.
+    if(!isSyncArmed())
+        emit jogged(id_, v);
 }
 
 void JointRow::onSpinChanged(int v)
@@ -102,5 +119,6 @@ void JointRow::onSpinChanged(int v)
     suppress_ = true;
     slider_->setValue(v);
     suppress_ = false;
-    emit jogged(id_, v);
+    if(!isSyncArmed())
+        emit jogged(id_, v);
 }

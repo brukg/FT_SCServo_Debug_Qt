@@ -72,10 +72,11 @@ void JointControlTab::setServos(const std::vector<feetech_servo::GroupTarget> &s
     }
     rows_.clear();
 
-    // insert before the trailing stretch (last item)
+    // insert before the trailing stretch (last item). s.pos carries the servo's
+    // present position (read by the owner), so the adjuster starts there.
     for(const auto &s : servos)
     {
-        auto *row = new JointRow(s.id, s.profile, this);
+        auto *row = new JointRow(s.id, s.profile, s.pos, this);
         connect(row, &JointRow::torqueToggled, this, &JointControlTab::torqueToggled);
         connect(row, &JointRow::jogged,        this, &JointControlTab::jogged);
         rowLayout_->insertWidget(rowLayout_->count() - 1, row);
