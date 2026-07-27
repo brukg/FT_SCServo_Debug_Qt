@@ -125,13 +125,11 @@ void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> 
 {
     if(armed.empty())
     {
-        ui->ServoSearchText->setText("Sync Write: no torque-enabled joints");
+        ui->ServoSearchText->setText("Sync Write: no joints armed");
         return;
     }
     feetech_servo::sync_write_group(scs_serial_, sms_sts_serial_, hls_serial_,
                                     armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
-    ui->ServoSearchText->setText(QString("Sync Write: %1 joint(s) -> %2")
-                                 .arg(armed.size()).arg(armed.front().pos));
 }
 
 void MainWindow::onJointPollTick()
@@ -150,6 +148,13 @@ void MainWindow::onJointPollTick()
             pos = hls_serial_->read_pos(d.id);
         else
             pos = scserial_->read_word(d.id, 56);   // present position register
+
+        // Reflect the ACTUAL torque-enable state (register 40) into the checkbox
+        // every cycle, so it always matches the motor -- if a jog energizes the
+        // motor, the box shows ON, never a stale OFF while the motor is driving.
+        int te = scserial_->read_byte(d.id, 40);
+        if(te >= 0)
+            joint_tab_->reflectTorque(d.id, te != 0);
     }
     joint_tab_->setPresentPosition(d.id, pos);
     joint_poll_cursor_++;
