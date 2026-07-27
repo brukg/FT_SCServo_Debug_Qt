@@ -125,11 +125,13 @@ void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> 
 {
     if(armed.empty())
     {
-        ui->ServoSearchText->setText("Sync Write: no joints armed");
+        ui->ServoSearchText->setText("Sync Write: no torque-enabled joints");
         return;
     }
     feetech_servo::sync_write_group(scs_serial_, sms_sts_serial_, hls_serial_,
                                     armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
+    ui->ServoSearchText->setText(QString("Sync Write: %1 joint(s) -> %2")
+                                 .arg(armed.size()).arg(armed.front().pos));
 }
 
 void MainWindow::onJointPollTick()

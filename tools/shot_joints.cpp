@@ -14,7 +14,9 @@ int main(int argc, char *argv[]){
     };
     t.setServos(v);
     t.setPresentPosition(1, 3083); t.setPresentPosition(2, 4095); t.setPresentPosition(4, 4078);
-    t.reflectTorque(1, true);   // servo 1 has torque actually ON
+    t.reflectTorque(1, true);   // servo 1 torque ON -> slider enabled
+    t.reflectTorque(2, false);
+    t.reflectTorque(4, false);
     t.show(); QApplication::processEvents();
     t.grab().save("joints.png"); printf("wrote joints.png\n");
     return 0;

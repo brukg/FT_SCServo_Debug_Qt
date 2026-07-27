@@ -48,7 +48,6 @@ signals:
 
 private:
     void onSyncWriteClicked();
-    void onSelectAllSync(bool on);
 
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
