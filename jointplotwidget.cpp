@@ -139,9 +139,11 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     goalCheck_ = new QCheckBox("Goal overlay", this);
     goalCheck_->setToolTip("Overlay each joint's commanded goal (dashed) against its actual position.");
 
-    playPause_ = new QPushButton("Pause", this);   // starts live, so button offers Pause
+    playPause_ = new QPushButton("Pause", this);   // freezes the VIEW; recording never stops
     auto *clearBtn = new QPushButton("Clear", this);
-    record_ = new QPushButton("● Record", this);
+    auto *exportBtn = new QPushButton("Export CSV", this);
+    exportBtn->setToolTip("Save the entire held buffer — every signal, every joint, "
+                          "full history — to a CSV. Data is held until Clear.");
     auto *zin  = new QPushButton("Zoom +", this);
     auto *zout = new QPushButton("Zoom −", this);
     auto *zrst = new QPushButton("Reset", this);
@@ -154,7 +156,7 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     bar->addSpacing(12);
     bar->addWidget(playPause_);
     bar->addWidget(clearBtn);
-    bar->addWidget(record_);
+    bar->addWidget(exportBtn);
     bar->addSpacing(12);
     bar->addWidget(zin);
     bar->addWidget(zout);
@@ -202,12 +204,17 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     });
     connect(playPause_, &QPushButton::clicked, this, &JointPlotWidget::onPlayPause);
     connect(clearBtn,   &QPushButton::clicked, this, &JointPlotWidget::onClear);
-    connect(record_,    &QPushButton::clicked, this, &JointPlotWidget::onRecordToggle);
+    connect(exportBtn,  &QPushButton::clicked, this, &JointPlotWidget::onExport);
     connect(zin,  &QPushButton::clicked, this, &JointPlotWidget::zoomIn);
     connect(zout, &QPushButton::clicked, this, &JointPlotWidget::zoomOut);
     connect(zrst, &QPushButton::clicked, this, &JointPlotWidget::zoomReset);
 
     clock_.start();   // capture time base; t=0 now, restarts on Clear / new joints
+}
+
+QStringList JointPlotWidget::allSignals()
+{
+    return {"position", "speed", "load", "current", "temperature", "voltage"};
 }
 
 QString JointPlotWidget::currentSignal() const { return signalCombo_->currentText(); }
@@ -280,40 +287,42 @@ void JointPlotWidget::wireLegendToggling()
     }
 }
 
-void JointPlotWidget::addSample(uint8_t id, int value)
+void JointPlotWidget::addSample(uint8_t id, const QString &signal, int value)
 {
-    if(!live_) return;
-    auto it = present_.find(id);
-    if(it == present_.end() || value < 0) return;
+    if(names_.find(id) == names_.end()) return;   // unknown joint
     const double t = clock_.elapsed() / 1000.0;
-    const QString sig = signalCombo_->currentText();
 
-    // Keep this signal's history so switching the dropdown never loses it.
-    QVector<QPointF> &buf = data_[sig][id];
+    // Always store every signal's history (held until Clear), regardless of which
+    // one is on screen. Pausing freezes the view only, never the recording.
+    QVector<QPointF> &buf = data_[signal][id];
     buf.append(QPointF(t, value));
-    if(buf.size() > 60000) buf.remove(0, buf.size() - 60000);
+    if(buf.size() > 200000) buf.remove(0, buf.size() - 200000);
 
-    it->second->append(t, value);   // the displayed signal is the current one
-    if(it->second->count() > 60000)
-        it->second->removePoints(0, it->second->count() - 60000);
-    if(recorder_.isRecording())
-        recorder_.write(t, id, names_[id], value);
-
-    if(!yInit_) { yMin_ = yMax_ = value; yInit_ = true; }
-    yMin_ = qMin<double>(yMin_, value);
-    yMax_ = qMax<double>(yMax_, value);
-    trimAndFollow(t);
+    // Only the displayed signal updates the visible series.
+    if(signal == signalCombo_->currentText())
+    {
+        auto it = present_.find(id);
+        if(it != present_.end())
+        {
+            it->second->append(t, value);
+            if(it->second->count() > 200000)
+                it->second->removePoints(0, it->second->count() - 200000);
+            if(!yInit_) { yMin_ = yMax_ = value; yInit_ = true; }
+            yMin_ = qMin<double>(yMin_, value);
+            yMax_ = qMax<double>(yMax_, value);
+            trimAndFollow(t);
+        }
+    }
 }
 
 void JointPlotWidget::addGoalSample(uint8_t id, int value)
 {
-    if(!live_) return;
     auto it = goal_.find(id);
-    if(it == goal_.end() || value < 0) return;
+    if(it == goal_.end()) return;
     const double t = clock_.elapsed() / 1000.0;
     it->second->append(t, value);
-    if(it->second->count() > 60000)
-        it->second->removePoints(0, it->second->count() - 60000);
+    if(it->second->count() > 200000)
+        it->second->removePoints(0, it->second->count() - 200000);
 }
 
 void JointPlotWidget::trimAndFollow(double t)
@@ -352,18 +361,17 @@ void JointPlotWidget::onSignalChanged()
 
     const bool goalOk = (sig == "position") && goalCheck_->isChecked();
     for(auto &kv : goal_) kv.second->setVisible(goalOk);
-    recorder_.setSignal(sig);
     following_ = true;
     if(yInit_) trimAndFollow(maxT);
     else       axisX_->setRange(0, window_s_);
-    emit signalSelected(sig);
 }
 
 void JointPlotWidget::onPlayPause()
 {
-    live_ = !live_;
-    playPause_->setText(live_ ? "Pause" : "Play");
-    status_->setText(live_ ? "" : "paused");
+    // Pause only freezes the view (auto-follow); recording never stops.
+    following_ = !following_;
+    playPause_->setText(following_ ? "Pause" : "Play");
+    status_->setText(following_ ? "" : "view paused (still recording)");
 }
 
 void JointPlotWidget::onClear()
@@ -377,29 +385,43 @@ void JointPlotWidget::onClear()
     axisX_->setRange(0, window_s_);
 }
 
-void JointPlotWidget::onRecordToggle()
+void JointPlotWidget::onExport()
 {
-    if(recorder_.isRecording())
-    {
-        recorder_.stop();
-        record_->setText("● Record");
-        status_->setText("saved");
-        return;
-    }
+    // Dump the entire held buffer: every signal, every joint, full history.
+    bool any = false;
+    for(const auto &s : data_) if(!s.second.empty()) { any = true; break; }
+    if(!any) { status_->setText("nothing to export yet"); return; }
+
     const QString path = QFileDialog::getSaveFileName(
-        this, "Record joints to CSV",
+        this, "Export all joint data to CSV",
         QString("joints_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
         "CSV (*.csv)");
     if(path.isEmpty()) return;
-    if(recorder_.start(path, signalCombo_->currentText()))
+
+    CsvRecorder rec;
+    if(!rec.start(path, ""))
     {
-        record_->setText("■ Stop");
-        status_->setText("recording…");
+        status_->setText("export failed");
+        return;
     }
-    else
+    qint64 rows = 0;
+    for(const auto &sigKV : data_)
     {
-        status_->setText("record failed");
+        rec.setSignal(sigKV.first);
+        for(const auto &idKV : sigKV.second)
+        {
+            const QString name = names_.count(idKV.first)
+                                     ? names_[idKV.first]
+                                     : QString::number(idKV.first);
+            for(const QPointF &p : idKV.second)
+            {
+                rec.write(p.x(), idKV.first, name, qRound(p.y()));
+                rows++;
+            }
+        }
     }
+    rec.stop();
+    status_->setText(QString("exported %1 rows").arg(rows));
 }
 
 void JointPlotWidget::zoomIn()  { chart_->zoomIn(); }

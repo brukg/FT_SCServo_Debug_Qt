@@ -126,7 +126,8 @@ private:
     JointControlTab *joint_tab_ = nullptr;
     QTimer *plot_timer_ = nullptr;
     std::map<uint8_t, int> last_goal_;                    // last commanded goal per joint, for goal overlay
-    size_t joint_poll_cursor_ = 0;                        // round-robin index for present-position reads
+    size_t joint_poll_cursor_ = 0;                        // round-robin index for present-position/torque reads
+    size_t plot_cursor_ = 0;                              // separate round-robin index for the plot feed
     int search_id_ = 0;
     struct
     {

@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QIntValidator>
 #include <QRegExpValidator>
+#include <climits>
 #include <QDir>
 #include <cmath>
 
@@ -110,45 +111,54 @@ JointPlotWidget *MainWindow::activePlot() const
     return nullptr;
 }
 
-// Read one signal by name for a servo. Returns -1 on failure.
+// Read one signal by name for a servo. Returns INT_MIN on a comms failure (so a
+// real negative value, e.g. reverse speed, is not confused with an error).
 int MainWindow::readSignal(const feetech_servo::GroupTarget &d, const QString &sig)
 {
     if(!d.profile.known)
-        return -1;
+        return INT_MIN;
     if(sig == "position")
-        return (d.profile.series == feetech_servo::HLS)
-                   ? hls_serial_->read_pos(d.id)
-                   : scserial_->read_word(d.id, 56);
-    if(sig == "temperature") return scserial_->read_byte(d.id, 63);
-    if(sig == "voltage")     return scserial_->read_byte(d.id, 62);
+    {
+        int p = (d.profile.series == feetech_servo::HLS)
+                    ? hls_serial_->read_pos(d.id)
+                    : scserial_->read_word(d.id, 56);
+        return p < 0 ? INT_MIN : p;
+    }
+    if(sig == "temperature") { int v = scserial_->read_byte(d.id, 63); return v < 0 ? INT_MIN : v; }
+    if(sig == "voltage")     { int v = scserial_->read_byte(d.id, 62); return v < 0 ? INT_MIN : v; }
 
     // speed(58)/load(60)/current(69): 2-byte, sign-magnitude with bit 15.
     uint8_t addr = (sig == "speed") ? 58 : (sig == "load") ? 60 : 69;
     int raw = scserial_->read_word(d.id, addr);
-    if(raw < 0) return -1;
+    if(raw < 0) return INT_MIN;
     return (raw & (1 << 15)) ? -(raw & ~(1 << 15)) : raw;
 }
 
 void MainWindow::onPlotFeedTick()
 {
     JointPlotWidget *plot = activePlot();
-    if(!plot || discovered_.empty() || !serial_->isOpen() || is_searching_ || !plot->isLive())
+    if(!plot || discovered_.empty() || !serial_->isOpen() || is_searching_)
         return;
-    if(joint_poll_cursor_ >= discovered_.size())
-        joint_poll_cursor_ = 0;
+    if(plot_cursor_ >= discovered_.size())
+        plot_cursor_ = 0;
 
-    const auto &d = discovered_[joint_poll_cursor_];
-    const QString sig = plot->currentSignal();
-    const int val = readSignal(d, sig);
-    plot->addSample(d.id, val);          // the plot timestamps with its own clock
+    const auto &d = discovered_[plot_cursor_];
 
-    if(sig == "position" && plot->goalOverlayOn())
+    // Record EVERY signal for this joint each cycle -- not just the visible one --
+    // so switching the dropdown always shows a full trace from the start.
+    for(const QString &sig : JointPlotWidget::allSignals())
+    {
+        const int v = readSignal(d, sig);
+        if(v != INT_MIN)
+            plot->addSample(d.id, sig, v);
+    }
+    if(plot->goalOverlayOn())
     {
         auto g = last_goal_.find(d.id);
         if(g != last_goal_.end())
             plot->addGoalSample(d.id, g->second);
     }
-    joint_poll_cursor_++;
+    plot_cursor_++;
 }
 
 const feetech_servo::ServoProfile *MainWindow::profileForId(uint8_t id) const

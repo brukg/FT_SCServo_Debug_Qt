@@ -38,24 +38,26 @@ public:
     struct JointInfo { uint8_t id; QString name; };
     void setJoints(const std::vector<JointInfo> &joints);   // rebuild series
 
-    // Feed one sample for a joint. The plot timestamps it with its own capture
-    // clock (0 at capture start / last Clear), so the owner passes only the value.
-    void addSample(uint8_t id, int value);
+    // Feed one sample of a named signal for a joint. Every signal is stored
+    // (not just the displayed one), so switching the dropdown shows full history.
+    // The plot timestamps with its own capture clock (0 at capture start / Clear).
+    void addSample(uint8_t id, const QString &signal, int value);
     void addGoalSample(uint8_t id, int value);
 
-    QString currentSignal() const;   // e.g. "position"
+    // Signals the owner should read and feed every cycle (all of them, always).
+    static QStringList allSignals();
+
+    QString currentSignal() const;   // the one being displayed, e.g. "position"
     bool    goalOverlayOn() const;
-    bool    isLive() const { return live_; }
 
 signals:
-    void signalSelected(const QString &signal);   // owner should read this register
     void goalOverlayToggled(bool on);
 
 private:
     void onSignalChanged();
     void onPlayPause();
     void onClear();
-    void onRecordToggle();
+    void onExport();
     void zoomIn();
     void zoomOut();
     void zoomReset();
@@ -80,15 +82,12 @@ private:
     QComboBox   *signalCombo_ = nullptr;
     QCheckBox   *goalCheck_ = nullptr;
     QPushButton *playPause_ = nullptr;
-    QPushButton *record_ = nullptr;
     QLabel      *status_ = nullptr;
 
-    bool   live_ = true;
-    bool   following_ = true;    // auto-scroll to latest; off once the user zooms/pans
+    bool   following_ = true;    // auto-scroll to latest; off once the user zooms/pans or pauses
     double window_s_ = 20.0;     // rolling window shown while live
     double yMin_ = 0, yMax_ = 4095;
     bool   yInit_ = false;
-    CsvRecorder recorder_;
     int    color_cursor_ = 0;
     QElapsedTimer clock_;        // capture time base; restarts on Clear / new joints
 };
