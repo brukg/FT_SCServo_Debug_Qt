@@ -206,6 +206,8 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     connect(zin,  &QPushButton::clicked, this, &JointPlotWidget::zoomIn);
     connect(zout, &QPushButton::clicked, this, &JointPlotWidget::zoomOut);
     connect(zrst, &QPushButton::clicked, this, &JointPlotWidget::zoomReset);
+
+    clock_.start();   // capture time base; t=0 now, restarts on Clear / new joints
 }
 
 QString JointPlotWidget::currentSignal() const { return signalCombo_->currentText(); }
@@ -229,8 +231,10 @@ void JointPlotWidget::setJoints(const std::vector<JointInfo> &joints)
     for(auto &kv : present_) { chart_->removeSeries(kv.second); delete kv.second; }
     for(auto &kv : goal_)    { chart_->removeSeries(kv.second); delete kv.second; }
     present_.clear(); goal_.clear(); names_.clear();
+    data_.clear();
     color_cursor_ = 0;
     yInit_ = false;
+    clock_.restart();            // new joint set => fresh capture from t=0
 
     for(const auto &j : joints)
     {
@@ -276,17 +280,24 @@ void JointPlotWidget::wireLegendToggling()
     }
 }
 
-void JointPlotWidget::addSample(uint8_t id, double t, int value)
+void JointPlotWidget::addSample(uint8_t id, int value)
 {
     if(!live_) return;
     auto it = present_.find(id);
     if(it == present_.end() || value < 0) return;
-    it->second->append(t, value);
-    if(recorder_.isRecording())
-        recorder_.write(t, id, names_[id], value);
-    // bound memory
+    const double t = clock_.elapsed() / 1000.0;
+    const QString sig = signalCombo_->currentText();
+
+    // Keep this signal's history so switching the dropdown never loses it.
+    QVector<QPointF> &buf = data_[sig][id];
+    buf.append(QPointF(t, value));
+    if(buf.size() > 60000) buf.remove(0, buf.size() - 60000);
+
+    it->second->append(t, value);   // the displayed signal is the current one
     if(it->second->count() > 60000)
         it->second->removePoints(0, it->second->count() - 60000);
+    if(recorder_.isRecording())
+        recorder_.write(t, id, names_[id], value);
 
     if(!yInit_) { yMin_ = yMax_ = value; yInit_ = true; }
     yMin_ = qMin<double>(yMin_, value);
@@ -294,11 +305,12 @@ void JointPlotWidget::addSample(uint8_t id, double t, int value)
     trimAndFollow(t);
 }
 
-void JointPlotWidget::addGoalSample(uint8_t id, double t, int value)
+void JointPlotWidget::addGoalSample(uint8_t id, int value)
 {
     if(!live_) return;
     auto it = goal_.find(id);
     if(it == goal_.end() || value < 0) return;
+    const double t = clock_.elapsed() / 1000.0;
     it->second->append(t, value);
     if(it->second->count() > 60000)
         it->second->removePoints(0, it->second->count() - 60000);
@@ -320,12 +332,30 @@ void JointPlotWidget::onSignalChanged()
 {
     const QString sig = signalCombo_->currentText();
     axisY_->setTitleText(sig);
-    // switching signal starts a fresh trace
-    onClear();
-    // goal overlay only makes sense for position
+
+    // Show THIS signal's retained history instead of wiping. Each signal keeps
+    // its own data; the dropdown only changes which one is displayed.
+    yInit_ = false;
+    double maxT = 0;
+    for(auto &kv : present_)
+    {
+        const QVector<QPointF> &buf = data_[sig][kv.first];
+        kv.second->replace(buf);
+        for(const QPointF &p : buf)
+        {
+            if(!yInit_) { yMin_ = yMax_ = p.y(); yInit_ = true; }
+            yMin_ = qMin(yMin_, p.y());
+            yMax_ = qMax(yMax_, p.y());
+            maxT  = qMax(maxT, p.x());
+        }
+    }
+
     const bool goalOk = (sig == "position") && goalCheck_->isChecked();
     for(auto &kv : goal_) kv.second->setVisible(goalOk);
     recorder_.setSignal(sig);
+    following_ = true;
+    if(yInit_) trimAndFollow(maxT);
+    else       axisX_->setRange(0, window_s_);
     emit signalSelected(sig);
 }
 
@@ -340,6 +370,8 @@ void JointPlotWidget::onClear()
 {
     for(auto &kv : present_) kv.second->clear();
     for(auto &kv : goal_)    kv.second->clear();
+    data_.clear();                     // wipe every signal's history
+    clock_.restart();                  // and reset time back to 0
     yInit_ = false;
     following_ = true;                 // resume live follow after a clear
     axisX_->setRange(0, window_s_);

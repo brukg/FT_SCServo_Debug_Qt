@@ -125,7 +125,6 @@ private:
     std::vector<feetech_servo::GroupTarget> discovered_;  // id + profile, for the Joint Control tab
     JointControlTab *joint_tab_ = nullptr;
     QTimer *plot_timer_ = nullptr;
-    QElapsedTimer *plot_clock_ = nullptr;                 // time base (seconds) for plot samples
     std::map<uint8_t, int> last_goal_;                    // last commanded goal per joint, for goal overlay
     size_t joint_poll_cursor_ = 0;                        // round-robin index for present-position reads
     int search_id_ = 0;

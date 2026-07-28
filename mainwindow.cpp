@@ -95,8 +95,7 @@ void MainWindow::setupJointControl()
     // keeps its own single-servo graph; a second plot there was redundant.
 
     // Timer feeds the Joint Control plot round-robin while that tab is showing.
-    plot_clock_ = new QElapsedTimer();
-    plot_clock_->start();
+    // (The plot owns its own capture clock, so no time base is needed here.)
     plot_timer_ = new QTimer(this);
     plot_timer_->setInterval(50);
     connect(plot_timer_, &QTimer::timeout, this, &MainWindow::onPlotFeedTick);
@@ -141,14 +140,13 @@ void MainWindow::onPlotFeedTick()
     const auto &d = discovered_[joint_poll_cursor_];
     const QString sig = plot->currentSignal();
     const int val = readSignal(d, sig);
-    const double t = plot_clock_->elapsed() / 1000.0;
-    plot->addSample(d.id, t, val);
+    plot->addSample(d.id, val);          // the plot timestamps with its own clock
 
     if(sig == "position" && plot->goalOverlayOn())
     {
         auto g = last_goal_.find(d.id);
         if(g != last_goal_.end())
-            plot->addGoalSample(d.id, t, g->second);
+            plot->addGoalSample(d.id, g->second);
     }
     joint_poll_cursor_++;
 }

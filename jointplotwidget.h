@@ -2,6 +2,7 @@
 #define JOINTPLOTWIDGET_H
 
 #include <QWidget>
+#include <QElapsedTimer>
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
@@ -37,9 +38,10 @@ public:
     struct JointInfo { uint8_t id; QString name; };
     void setJoints(const std::vector<JointInfo> &joints);   // rebuild series
 
-    // Feed one sample for a joint. t is seconds since the plot started.
-    void addSample(uint8_t id, double t, int value);
-    void addGoalSample(uint8_t id, double t, int value);
+    // Feed one sample for a joint. The plot timestamps it with its own capture
+    // clock (0 at capture start / last Clear), so the owner passes only the value.
+    void addSample(uint8_t id, int value);
+    void addGoalSample(uint8_t id, int value);
 
     QString currentSignal() const;   // e.g. "position"
     bool    goalOverlayOn() const;
@@ -70,6 +72,10 @@ private:
     std::map<uint8_t, QLineSeries*> present_;
     std::map<uint8_t, QLineSeries*> goal_;
     std::map<uint8_t, QString>      names_;
+    // Per-signal history so switching the dropdown doesn't lose data: for each
+    // signal name, each joint's accumulated points. The display series show the
+    // currently-selected signal; the others are retained here.
+    std::map<QString, std::map<uint8_t, QVector<QPointF>>> data_;
 
     QComboBox   *signalCombo_ = nullptr;
     QCheckBox   *goalCheck_ = nullptr;
@@ -84,6 +90,7 @@ private:
     bool   yInit_ = false;
     CsvRecorder recorder_;
     int    color_cursor_ = 0;
+    QElapsedTimer clock_;        // capture time base; restarts on Clear / new joints
 };
 
 #endif // JOINTPLOTWIDGET_H
