@@ -55,6 +55,7 @@ private:
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
     JointPlotWidget *plot_ = nullptr;
+    class QSlider *goalSlider_ = nullptr;
     QSpinBox *goal_ = nullptr;
     QSpinBox *speed_ = nullptr;
     QSpinBox *acc_ = nullptr;

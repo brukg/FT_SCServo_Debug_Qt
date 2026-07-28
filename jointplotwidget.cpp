@@ -35,9 +35,9 @@ protected:
     }
     void mousePressEvent(QMouseEvent *e) override
     {
-        if(onInteract) onInteract();
-        if(e->button() == Qt::RightButton)
+        if(e->button() == Qt::LeftButton)
         {
+            if(onInteract) onInteract();
             panning_ = true;
             last_ = e->pos();
             setCursor(Qt::ClosedHandCursor);
@@ -51,7 +51,10 @@ protected:
         if(panning_)
         {
             const QPoint d = e->pos() - last_;
-            chart()->scroll(-d.x(), d.y());
+            if(e->modifiers() & Qt::ShiftModifier)
+                chart()->scroll(0, d.y());     // Shift: pan vertically
+            else
+                chart()->scroll(-d.x(), 0);    // default: pan horizontally
             last_ = e->pos();
             e->accept();
             return;
@@ -60,7 +63,7 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        if(panning_ && e->button() == Qt::RightButton)
+        if(panning_ && e->button() == Qt::LeftButton)
         {
             panning_ = false;
             unsetCursor();
@@ -128,7 +131,8 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     cv->onInteract = [this]{ following_ = false; };          // user took control of the view
     view_ = cv;
     view_->setRenderHint(QPainter::Antialiasing);
-    view_->setRubberBand(QChartView::RectangleRubberBand);   // left-drag to box-zoom
+    // Interactions: wheel = zoom, left-drag = pan horizontal, Shift+left-drag =
+    // pan vertical, buttons = zoom in/out/reset.
 
     auto *outer = new QVBoxLayout(this);
     outer->addLayout(bar);

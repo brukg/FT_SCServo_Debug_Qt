@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QSlider>
 #include <QTimer>
 
 JointControlTab::JointControlTab(QWidget *parent)
@@ -20,9 +21,16 @@ JointControlTab::JointControlTab(QWidget *parent)
     auto *selectAll = new QPushButton("Select-all Sync", this);
     selectAll->setCheckable(true);
 
+    goalSlider_ = new QSlider(Qt::Horizontal, this);
+    goalSlider_->setRange(0, 4095); goalSlider_->setValue(2048);
+    goalSlider_->setMinimumWidth(200);
     goal_   = new QSpinBox(this); goal_->setRange(0, 4095); goal_->setValue(2048);
     auto *syncWrite = new QPushButton("Sync Write → Goal", this);
     syncWrite->setToolTip("Write the Goal value to every Sync-checked joint, in one command.");
+
+    // Slider and spinbox mirror each other; drag the slider instead of typing.
+    connect(goalSlider_, &QSlider::valueChanged, goal_, &QSpinBox::setValue);
+    connect(goal_, QOverload<int>::of(&QSpinBox::valueChanged), goalSlider_, &QSlider::setValue);
 
     speed_  = new QSpinBox(this); speed_->setRange(0, 65535); speed_->setValue(600);
     acc_    = new QSpinBox(this); acc_->setRange(0, 255);     acc_->setValue(50);
@@ -33,7 +41,9 @@ JointControlTab::JointControlTab(QWidget *parent)
     bar->addWidget(torqueOn);
     bar->addWidget(selectAll);
     bar->addStretch(1);
-    bar->addWidget(new QLabel("Goal", this));   bar->addWidget(goal_);
+    bar->addWidget(new QLabel("Goal", this));
+    bar->addWidget(goalSlider_);
+    bar->addWidget(goal_);
     bar->addWidget(syncWrite);
     bar->addWidget(new QLabel("  speed", this)); bar->addWidget(speed_);
     bar->addWidget(new QLabel("acc", this));    bar->addWidget(acc_);
