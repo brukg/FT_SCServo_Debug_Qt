@@ -24,13 +24,15 @@ JointControlTab::JointControlTab(QWidget *parent)
     goalSlider_ = new QSlider(Qt::Horizontal, this);
     goalSlider_->setRange(0, 4095); goalSlider_->setValue(2048);
     goalSlider_->setMinimumWidth(200);
+    goalSlider_->setToolTip("Drag to move every Sync-checked joint to this value, live —\n"
+                            "same as an individual joint's slider, but for the whole group.");
     goal_   = new QSpinBox(this); goal_->setRange(0, 4095); goal_->setValue(2048);
-    auto *syncWrite = new QPushButton("Sync Write → Goal", this);
-    syncWrite->setToolTip("Write the Goal value to every Sync-checked joint, in one command.");
 
-    // Slider and spinbox mirror each other; drag the slider instead of typing.
+    // Slider and spinbox mirror each other; dragging the group slider drives all
+    // armed joints LIVE, consistent with the per-joint sliders (no separate button).
     connect(goalSlider_, &QSlider::valueChanged, goal_, &QSpinBox::setValue);
     connect(goal_, QOverload<int>::of(&QSpinBox::valueChanged), goalSlider_, &QSlider::setValue);
+    connect(goal_, QOverload<int>::of(&QSpinBox::valueChanged), this, &JointControlTab::onSyncWriteClicked);
 
     speed_  = new QSpinBox(this); speed_->setRange(0, 65535); speed_->setValue(600);
     acc_    = new QSpinBox(this); acc_->setRange(0, 255);     acc_->setValue(50);
@@ -41,10 +43,9 @@ JointControlTab::JointControlTab(QWidget *parent)
     bar->addWidget(torqueOn);
     bar->addWidget(selectAll);
     bar->addStretch(1);
-    bar->addWidget(new QLabel("Goal", this));
+    bar->addWidget(new QLabel("Armed joints →", this));
     bar->addWidget(goalSlider_);
     bar->addWidget(goal_);
-    bar->addWidget(syncWrite);
     bar->addWidget(new QLabel("  speed", this)); bar->addWidget(speed_);
     bar->addWidget(new QLabel("acc", this));    bar->addWidget(acc_);
     bar->addWidget(new QLabel("torque", this)); bar->addWidget(torque_);
@@ -75,7 +76,6 @@ JointControlTab::JointControlTab(QWidget *parent)
     connect(torqueOff, &QPushButton::clicked, this, [this]{ emit torqueAllRequested(false); });
     connect(torqueOn,  &QPushButton::clicked, this, [this]{ emit torqueAllRequested(true); });
     connect(selectAll, &QPushButton::toggled, this, &JointControlTab::onSelectAllSync);
-    connect(syncWrite, &QPushButton::clicked, this, &JointControlTab::onSyncWriteClicked);
 
     poll_ = new QTimer(this);
     poll_->setInterval(60);

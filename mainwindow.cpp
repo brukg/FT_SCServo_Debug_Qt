@@ -190,10 +190,7 @@ void MainWindow::onJointTorqueAll(bool on)
 void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> &armed)
 {
     if(armed.empty())
-    {
-        ui->ServoSearchText->setText("Sync Write: no joints armed");
-        return;
-    }
+        return;   // live drag with nothing armed: no-op, no noise
     feetech_servo::sync_write_group(scs_serial_, sms_sts_serial_, hls_serial_,
                                     armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
     for(const auto &t : armed)
