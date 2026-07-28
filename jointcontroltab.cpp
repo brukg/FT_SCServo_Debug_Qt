@@ -1,5 +1,6 @@
 #include "jointcontroltab.h"
 #include "jointrow.h"
+#include "jointplotwidget.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -7,6 +8,7 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QTimer>
 
 JointControlTab::JointControlTab(QWidget *parent)
@@ -15,10 +17,12 @@ JointControlTab::JointControlTab(QWidget *parent)
     // ---- master control bar ------------------------------------------------
     auto *torqueOff = new QPushButton("Torque OFF All", this);
     auto *torqueOn  = new QPushButton("Torque ON All", this);
+    auto *selectAll = new QPushButton("Select-all Sync", this);
+    selectAll->setCheckable(true);
 
     goal_   = new QSpinBox(this); goal_->setRange(0, 4095); goal_->setValue(2048);
     auto *syncWrite = new QPushButton("Sync Write → Goal", this);
-    syncWrite->setToolTip("Write the Goal value to every torque-enabled joint, in one command.");
+    syncWrite->setToolTip("Write the Goal value to every Sync-checked joint, in one command.");
 
     speed_  = new QSpinBox(this); speed_->setRange(0, 65535); speed_->setValue(600);
     acc_    = new QSpinBox(this); acc_->setRange(0, 255);     acc_->setValue(50);
@@ -27,6 +31,7 @@ JointControlTab::JointControlTab(QWidget *parent)
     auto *bar = new QHBoxLayout();
     bar->addWidget(torqueOff);
     bar->addWidget(torqueOn);
+    bar->addWidget(selectAll);
     bar->addStretch(1);
     bar->addWidget(new QLabel("Goal", this));   bar->addWidget(goal_);
     bar->addWidget(syncWrite);
@@ -45,12 +50,21 @@ JointControlTab::JointControlTab(QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setWidget(rowHost);
 
+    // rows on top, the multi-joint plot below, user-resizable via a splitter
+    plot_ = new JointPlotWidget(this);
+    auto *split = new QSplitter(Qt::Vertical, this);
+    split->addWidget(scroll);
+    split->addWidget(plot_);
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 2);
+
     auto *outer = new QVBoxLayout(this);
     outer->addLayout(bar);
-    outer->addWidget(scroll, 1);
+    outer->addWidget(split, 1);
 
     connect(torqueOff, &QPushButton::clicked, this, [this]{ emit torqueAllRequested(false); });
     connect(torqueOn,  &QPushButton::clicked, this, [this]{ emit torqueAllRequested(true); });
+    connect(selectAll, &QPushButton::toggled, this, &JointControlTab::onSelectAllSync);
     connect(syncWrite, &QPushButton::clicked, this, &JointControlTab::onSyncWriteClicked);
 
     poll_ = new QTimer(this);
@@ -82,6 +96,12 @@ void JointControlTab::setServos(const std::vector<feetech_servo::GroupTarget> &s
         rowLayout_->insertWidget(rowLayout_->count() - 1, row);
         rows_.push_back(row);
     }
+
+    // mirror the joint set into the plot's series
+    std::vector<JointPlotWidget::JointInfo> infos;
+    for(const auto &s : servos)
+        infos.push_back({s.id, s.profile.name});
+    plot_->setJoints(infos);
 }
 
 std::vector<uint8_t> JointControlTab::rowIds() const
@@ -121,15 +141,20 @@ void JointControlTab::setPollActive(bool active)
         poll_->stop();
 }
 
+void JointControlTab::onSelectAllSync(bool on)
+{
+    for(auto *r : rows_)
+        r->setSyncArmed(on);
+}
+
 void JointControlTab::onSyncWriteClicked()
 {
-    // Sync Write sends the SAME master Goal value to every TORQUE-ENABLED joint,
-    // in one command per series. Torque-enabled == selected == commandable, so
-    // there is no separate arm step and torque-off joints are never written.
+    // Sync Write sends the SAME master Goal value to every armed joint, in one
+    // command per series. (Per-joint live positioning is the row sliders.)
     const int goal = goal_->value();
     std::vector<feetech_servo::GroupTarget> armed;
     for(auto *r : rows_)
-        if(r->isTorqueOn())
+        if(r->isSyncArmed() && r->profile().known)
             armed.push_back({r->id(), r->profile(), goal});
     emit syncWriteRequested(armed);
 }

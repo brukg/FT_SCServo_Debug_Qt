@@ -10,6 +10,7 @@ class QVBoxLayout;
 class QSpinBox;
 class QTimer;
 class JointRow;
+class JointPlotWidget;
 
 // Multi-servo control tab: one JointRow per discovered servo, a master control
 // bar (torque all on/off, select-all sync, sync write, shared speed/acc/torque),
@@ -35,6 +36,7 @@ public:
     std::vector<uint8_t> rowIds() const;
     void setPresentPosition(uint8_t id, int pos);
     void reflectTorque(uint8_t id, bool on);
+    JointPlotWidget *plot() const { return plot_; }
 
     // Enable/disable the poll cadence (driven by MainWindow when tab is active).
     void setPollActive(bool active);
@@ -48,9 +50,11 @@ signals:
 
 private:
     void onSyncWriteClicked();
+    void onSelectAllSync(bool on);
 
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
+    JointPlotWidget *plot_ = nullptr;
     QSpinBox *goal_ = nullptr;
     QSpinBox *speed_ = nullptr;
     QSpinBox *acc_ = nullptr;

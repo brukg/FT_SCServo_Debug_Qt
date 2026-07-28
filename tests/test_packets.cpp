@@ -1,7 +1,10 @@
 #include <QtTest>
+#include <QDir>
+#include <QFile>
 #include <vector>
 #include "servo/scserial.h"
 #include "servo/servo_dispatch.h"
+#include "csvrecorder.h"
 
 // Test double: captures every byte the servo layer would put on the wire.
 // Passing nullptr for the QSerialPort is safe because all IO is overridden.
@@ -57,6 +60,8 @@ private slots:
     void dispatch_enable_torque_routes_by_series();
     void sync_group_all_hls_emits_one_packet_with_torque();
     void sync_group_mixed_series_emits_one_packet_per_series();
+
+    void csv_recorder_writes_header_and_rows();
 };
 
 // Build a known ServoProfile for a given series.
@@ -332,6 +337,31 @@ void TestPackets::sync_group_mixed_series_emits_one_packet_per_series()
 
     // one HLS packet + one STS packet
     QCOMPARE(count_sync_packets(serial.tx), 2);
+}
+
+void TestPackets::csv_recorder_writes_header_and_rows()
+{
+    const QString path = QDir::tempPath() + "/ft_csv_test.csv";
+    {
+        CsvRecorder rec;
+        QVERIFY(rec.start(path, "position"));
+        QVERIFY(rec.isRecording());
+        rec.write(0.100, 1, "HLS3955", 3083);
+        rec.write(0.200, 2, "HLS3915", 4095);
+        rec.stop();
+        QVERIFY(!rec.isRecording());
+    }
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString content = QString::fromUtf8(f.readAll());
+    f.close();
+
+    const QStringList lines = content.split('\n', Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 3);
+    QCOMPARE(lines[0], QString("time_s,id,name,signal,value"));
+    QCOMPARE(lines[1], QString("0.100,1,HLS3955,position,3083"));
+    QCOMPARE(lines[2], QString("0.200,2,HLS3915,position,4095"));
+    QFile::remove(path);
 }
 
 QTEST_MAIN(TestPackets)

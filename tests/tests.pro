@@ -18,4 +18,5 @@ HEADERS += \
     ../servo/sms_sts.h \
     ../servo/scscl.h \
     ../servo/hlscl.h \
-    ../servo/servo_dispatch.h
+    ../servo/servo_dispatch.h \
+    ../csvrecorder.h

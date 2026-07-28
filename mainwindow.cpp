@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "jointcontroltab.h"
+#include "jointplotwidget.h"
+#include <QBoxLayout>
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QTimer>
@@ -64,6 +66,13 @@ void MainWindow::populateJointTab()
     }
     if(joint_tab_)
         joint_tab_->setServos(discovered_);
+    if(debug_plot_)
+    {
+        std::vector<JointPlotWidget::JointInfo> infos;
+        for(const auto &d : discovered_)
+            infos.push_back({d.id, d.profile.name});
+        debug_plot_->setJoints(infos);
+    }
 
     // Reflect each servo's ACTUAL torque-enable state (register 40) into the row
     // checkboxes, so the UI never claims torque is off when the servo has it on.
@@ -88,6 +97,70 @@ void MainWindow::setupJointControl()
     connect(joint_tab_, &JointControlTab::syncWriteRequested, this, &MainWindow::onJointSyncWrite);
     connect(joint_tab_, &JointControlTab::pollTick,           this, &MainWindow::onJointPollTick);
     connect(ui->tabWidget, &QTabWidget::currentChanged,       this, &MainWindow::onTabChanged);
+
+    // Multi-joint plot on the Debug tab too, appended under its existing content.
+    debug_plot_ = new JointPlotWidget(ui->DebugTab);
+    if(auto *dl = qobject_cast<QBoxLayout*>(ui->DebugTab->layout()))
+        dl->addWidget(debug_plot_);
+
+    // Single always-on timer feeds whichever tab's plot is showing, round-robin.
+    plot_clock_ = new QElapsedTimer();
+    plot_clock_->start();
+    plot_timer_ = new QTimer(this);
+    plot_timer_->setInterval(50);
+    connect(plot_timer_, &QTimer::timeout, this, &MainWindow::onPlotFeedTick);
+    plot_timer_->start();
+}
+
+// The plot belonging to the currently-visible tab, or nullptr if neither.
+JointPlotWidget *MainWindow::activePlot() const
+{
+    QWidget *cur = ui->tabWidget->currentWidget();
+    if(cur == joint_tab_) return joint_tab_ ? joint_tab_->plot() : nullptr;
+    if(cur == ui->DebugTab) return debug_plot_;
+    return nullptr;
+}
+
+// Read one signal by name for a servo. Returns -1 on failure.
+int MainWindow::readSignal(const feetech_servo::GroupTarget &d, const QString &sig)
+{
+    if(!d.profile.known)
+        return -1;
+    if(sig == "position")
+        return (d.profile.series == feetech_servo::HLS)
+                   ? hls_serial_->read_pos(d.id)
+                   : scserial_->read_word(d.id, 56);
+    if(sig == "temperature") return scserial_->read_byte(d.id, 63);
+    if(sig == "voltage")     return scserial_->read_byte(d.id, 62);
+
+    // speed(58)/load(60)/current(69): 2-byte, sign-magnitude with bit 15.
+    uint8_t addr = (sig == "speed") ? 58 : (sig == "load") ? 60 : 69;
+    int raw = scserial_->read_word(d.id, addr);
+    if(raw < 0) return -1;
+    return (raw & (1 << 15)) ? -(raw & ~(1 << 15)) : raw;
+}
+
+void MainWindow::onPlotFeedTick()
+{
+    JointPlotWidget *plot = activePlot();
+    if(!plot || discovered_.empty() || !serial_->isOpen() || is_searching_ || !plot->isLive())
+        return;
+    if(joint_poll_cursor_ >= discovered_.size())
+        joint_poll_cursor_ = 0;
+
+    const auto &d = discovered_[joint_poll_cursor_];
+    const QString sig = plot->currentSignal();
+    const int val = readSignal(d, sig);
+    const double t = plot_clock_->elapsed() / 1000.0;
+    plot->addSample(d.id, t, val);
+
+    if(sig == "position" && plot->goalOverlayOn())
+    {
+        auto g = last_goal_.find(d.id);
+        if(g != last_goal_.end())
+            plot->addGoalSample(d.id, t, g->second);
+    }
+    joint_poll_cursor_++;
 }
 
 const feetech_servo::ServoProfile *MainWindow::profileForId(uint8_t id) const
@@ -107,9 +180,12 @@ void MainWindow::onJointTorqueToggled(uint8_t id, bool on)
 void MainWindow::onJointJogged(uint8_t id, int target)
 {
     if(const auto *p = profileForId(id))
+    {
         feetech_servo::write_goal_for(scs_serial_, sms_sts_serial_, hls_serial_,
                                       id, *p, target,
                                       joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
+        last_goal_[id] = target;
+    }
 }
 
 void MainWindow::onJointTorqueAll(bool on)
@@ -130,6 +206,8 @@ void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> 
     }
     feetech_servo::sync_write_group(scs_serial_, sms_sts_serial_, hls_serial_,
                                     armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
+    for(const auto &t : armed)
+        last_goal_[t.id] = t.pos;
 }
 
 void MainWindow::onJointPollTick()
