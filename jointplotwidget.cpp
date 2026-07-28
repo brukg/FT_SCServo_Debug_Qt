@@ -42,6 +42,14 @@ protected:
     }
     void mousePressEvent(QMouseEvent *e) override
     {
+        // Only grab presses inside the plot area. Presses on the legend (or any
+        // other scene item) must pass through so legend click-to-toggle works.
+        if(!chart()->plotArea().contains(e->pos()))
+        {
+            QChartView::mousePressEvent(e);
+            return;
+        }
+
         if(e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton)
             mode_ = Pan;
         else if(e->button() == Qt::RightButton)
