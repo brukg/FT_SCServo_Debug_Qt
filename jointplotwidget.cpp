@@ -13,49 +13,69 @@
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <functional>
+#include <cmath>
 
 namespace {
 
-// QChartView with the mouse interactions users expect: wheel to zoom, right-drag
-// to pan (left-drag stays rubber-band box-zoom). onInteract fires whenever the
-// user changes the view, so the widget can stop auto-following the latest data.
+// QChartView implementing matplotlib's interactive-navigation standard:
+//   - Left-drag  or  Middle-drag : pan
+//   - Right-drag                 : zoom (horizontal -> X axis, vertical -> Y axis)
+//   - Wheel                      : zoom about the cursor
+// (see matplotlib "Interactive navigation" / NavigationToolbar). onInteract fires
+// on any view change so the widget can stop auto-following the latest data.
 class ChartView : public QChartView
 {
 public:
     ChartView(QChart *c, QWidget *p) : QChartView(c, p) {}
     std::function<void()> onInteract;
+    void setAxes(QValueAxis *ax, QValueAxis *ay) { ax_ = ax; ay_ = ay; }
 
 protected:
     void wheelEvent(QWheelEvent *e) override
     {
-        const qreal f = e->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
-        chart()->zoom(f);
         if(onInteract) onInteract();
+        const double f = e->angleDelta().y() > 0 ? 1.0 / 1.15 : 1.15;   // span factor
+        const QPointF a = dataAt(e->position().toPoint());
+        zoomAxis(ax_, a.x(), f);
+        zoomAxis(ay_, a.y(), f);
         e->accept();
     }
     void mousePressEvent(QMouseEvent *e) override
     {
-        if(e->button() == Qt::LeftButton)
-        {
-            if(onInteract) onInteract();
-            panning_ = true;
-            last_ = e->pos();
-            setCursor(Qt::ClosedHandCursor);
-            e->accept();
-            return;
-        }
-        QChartView::mousePressEvent(e);
+        if(e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton)
+            mode_ = Pan;
+        else if(e->button() == Qt::RightButton)
+            mode_ = Zoom;
+        else { QChartView::mousePressEvent(e); return; }
+
+        if(onInteract) onInteract();
+        last_ = press_ = e->pos();
+        anchor_ = dataAt(press_);
+        if(ax_) { px0_ = ax_->min(); px1_ = ax_->max(); }
+        if(ay_) { py0_ = ay_->min(); py1_ = ay_->max(); }
+        setCursor(mode_ == Pan ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
+        e->accept();
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        if(panning_)
+        if(mode_ == Pan)
         {
             const QPoint d = e->pos() - last_;
-            if(e->modifiers() & Qt::ShiftModifier)
-                chart()->scroll(0, d.y());     // Shift: pan vertically
-            else
-                chart()->scroll(-d.x(), 0);    // default: pan horizontally
+            chart()->scroll(-d.x(), d.y());
             last_ = e->pos();
+            e->accept();
+            return;
+        }
+        if(mode_ == Zoom)
+        {
+            // matplotlib right-drag: drag right zooms X in, drag up zooms Y in;
+            // scale grows with drag distance, anchored at the press point.
+            const double sx = std::pow(10.0, (e->pos().x() - press_.x()) / 200.0);
+            const double sy = std::pow(10.0, (press_.y() - e->pos().y()) / 200.0);
+            if(ax_) ax_->setRange(anchor_.x() - (anchor_.x() - px0_) / sx,
+                                  anchor_.x() + (px1_ - anchor_.x()) / sx);
+            if(ay_) ay_->setRange(anchor_.y() - (anchor_.y() - py0_) / sy,
+                                  anchor_.y() + (py1_ - anchor_.y()) / sy);
             e->accept();
             return;
         }
@@ -63,18 +83,40 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        if(panning_ && e->button() == Qt::LeftButton)
+        if(mode_ != None)
         {
-            panning_ = false;
+            mode_ = None;
             unsetCursor();
             e->accept();
             return;
         }
         QChartView::mouseReleaseEvent(e);
     }
+
 private:
-    bool   panning_ = false;
-    QPoint last_;
+    // Widget pixel -> data coordinates using the plot area and axis ranges.
+    QPointF dataAt(const QPoint &px) const
+    {
+        const QRectF pa = chart()->plotArea();
+        double x = 0, y = 0;
+        if(ax_ && pa.width() > 0)
+            x = ax_->min() + (px.x() - pa.left()) / pa.width() * (ax_->max() - ax_->min());
+        if(ay_ && pa.height() > 0)
+            y = ay_->min() + (pa.bottom() - px.y()) / pa.height() * (ay_->max() - ay_->min());
+        return QPointF(x, y);
+    }
+    // Scale one axis' span by `f` about anchor value `a`.
+    static void zoomAxis(QValueAxis *ax, double a, double f)
+    {
+        if(!ax) return;
+        ax->setRange(a - (a - ax->min()) * f, a + (ax->max() - a) * f);
+    }
+
+    enum Mode { None, Pan, Zoom } mode_ = None;
+    QValueAxis *ax_ = nullptr, *ay_ = nullptr;
+    QPoint  last_, press_;
+    QPointF anchor_;
+    double  px0_ = 0, px1_ = 0, py0_ = 0, py1_ = 0;
 };
 
 }
@@ -128,11 +170,17 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     chart_->addAxis(axisY_, Qt::AlignLeft);
 
     auto *cv = new ChartView(chart_, this);
+    cv->setAxes(axisX_, axisY_);
     cv->onInteract = [this]{ following_ = false; };          // user took control of the view
     view_ = cv;
     view_->setRenderHint(QPainter::Antialiasing);
-    // Interactions: wheel = zoom, left-drag = pan horizontal, Shift+left-drag =
-    // pan vertical, buttons = zoom in/out/reset.
+    view_->setToolTip("Navigation (matplotlib-style):\n"
+                      "  wheel — zoom about cursor\n"
+                      "  left-drag / middle-drag — pan\n"
+                      "  right-drag — zoom (horizontal→X, vertical→Y)\n"
+                      "  Reset — home view");
+    // Navigation (matplotlib standard): wheel = zoom about cursor, left/middle-drag
+    // = pan, right-drag = zoom (horizontal→X, vertical→Y), Reset = home.
 
     auto *outer = new QVBoxLayout(this);
     outer->addLayout(bar);
