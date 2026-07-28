@@ -66,13 +66,6 @@ void MainWindow::populateJointTab()
     }
     if(joint_tab_)
         joint_tab_->setServos(discovered_);
-    if(debug_plot_)
-    {
-        std::vector<JointPlotWidget::JointInfo> infos;
-        for(const auto &d : discovered_)
-            infos.push_back({d.id, d.profile.name});
-        debug_plot_->setJoints(infos);
-    }
 
     // Reflect each servo's ACTUAL torque-enable state (register 40) into the row
     // checkboxes, so the UI never claims torque is off when the servo has it on.
@@ -98,12 +91,10 @@ void MainWindow::setupJointControl()
     connect(joint_tab_, &JointControlTab::pollTick,           this, &MainWindow::onJointPollTick);
     connect(ui->tabWidget, &QTabWidget::currentChanged,       this, &MainWindow::onTabChanged);
 
-    // Multi-joint plot on the Debug tab too, appended under its existing content.
-    debug_plot_ = new JointPlotWidget(ui->DebugTab);
-    if(auto *dl = qobject_cast<QBoxLayout*>(ui->DebugTab->layout()))
-        dl->addWidget(debug_plot_);
+    // The multi-joint plot lives on the Joint Control tab only. The Debug tab
+    // keeps its own single-servo graph; a second plot there was redundant.
 
-    // Single always-on timer feeds whichever tab's plot is showing, round-robin.
+    // Timer feeds the Joint Control plot round-robin while that tab is showing.
     plot_clock_ = new QElapsedTimer();
     plot_clock_->start();
     plot_timer_ = new QTimer(this);
@@ -112,12 +103,11 @@ void MainWindow::setupJointControl()
     plot_timer_->start();
 }
 
-// The plot belonging to the currently-visible tab, or nullptr if neither.
+// The Joint Control plot, but only while its tab is visible (else nullptr).
 JointPlotWidget *MainWindow::activePlot() const
 {
-    QWidget *cur = ui->tabWidget->currentWidget();
-    if(cur == joint_tab_) return joint_tab_ ? joint_tab_->plot() : nullptr;
-    if(cur == ui->DebugTab) return debug_plot_;
+    if(joint_tab_ && ui->tabWidget->currentWidget() == joint_tab_)
+        return joint_tab_->plot();
     return nullptr;
 }
 

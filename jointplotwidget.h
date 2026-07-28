@@ -78,6 +78,7 @@ private:
     QLabel      *status_ = nullptr;
 
     bool   live_ = true;
+    bool   following_ = true;    // auto-scroll to latest; off once the user zooms/pans
     double window_s_ = 20.0;     // rolling window shown while live
     double yMin_ = 0, yMax_ = 4095;
     bool   yInit_ = false;

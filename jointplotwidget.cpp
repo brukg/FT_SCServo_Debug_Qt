@@ -10,6 +10,71 @@
 #include <QFileDialog>
 #include <QtCharts/QLegendMarker>
 #include <QDateTime>
+#include <QWheelEvent>
+#include <QMouseEvent>
+#include <functional>
+
+namespace {
+
+// QChartView with the mouse interactions users expect: wheel to zoom, right-drag
+// to pan (left-drag stays rubber-band box-zoom). onInteract fires whenever the
+// user changes the view, so the widget can stop auto-following the latest data.
+class ChartView : public QChartView
+{
+public:
+    ChartView(QChart *c, QWidget *p) : QChartView(c, p) {}
+    std::function<void()> onInteract;
+
+protected:
+    void wheelEvent(QWheelEvent *e) override
+    {
+        const qreal f = e->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
+        chart()->zoom(f);
+        if(onInteract) onInteract();
+        e->accept();
+    }
+    void mousePressEvent(QMouseEvent *e) override
+    {
+        if(onInteract) onInteract();
+        if(e->button() == Qt::RightButton)
+        {
+            panning_ = true;
+            last_ = e->pos();
+            setCursor(Qt::ClosedHandCursor);
+            e->accept();
+            return;
+        }
+        QChartView::mousePressEvent(e);
+    }
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if(panning_)
+        {
+            const QPoint d = e->pos() - last_;
+            chart()->scroll(-d.x(), d.y());
+            last_ = e->pos();
+            e->accept();
+            return;
+        }
+        QChartView::mouseMoveEvent(e);
+    }
+    void mouseReleaseEvent(QMouseEvent *e) override
+    {
+        if(panning_ && e->button() == Qt::RightButton)
+        {
+            panning_ = false;
+            unsetCursor();
+            e->accept();
+            return;
+        }
+        QChartView::mouseReleaseEvent(e);
+    }
+private:
+    bool   panning_ = false;
+    QPoint last_;
+};
+
+}
 
 JointPlotWidget::JointPlotWidget(QWidget *parent)
     : QWidget(parent)
@@ -59,9 +124,11 @@ JointPlotWidget::JointPlotWidget(QWidget *parent)
     chart_->addAxis(axisX_, Qt::AlignBottom);
     chart_->addAxis(axisY_, Qt::AlignLeft);
 
-    view_ = new QChartView(chart_, this);
+    auto *cv = new ChartView(chart_, this);
+    cv->onInteract = [this]{ following_ = false; };          // user took control of the view
+    view_ = cv;
     view_->setRenderHint(QPainter::Antialiasing);
-    view_->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom a region
+    view_->setRubberBand(QChartView::RectangleRubberBand);   // left-drag to box-zoom
 
     auto *outer = new QVBoxLayout(this);
     outer->addLayout(bar);
@@ -179,8 +246,10 @@ void JointPlotWidget::addGoalSample(uint8_t id, double t, int value)
 
 void JointPlotWidget::trimAndFollow(double t)
 {
-    // Follow the latest data with a rolling window; the user can still zoom/pan,
-    // and Reset returns to following.
+    // Only auto-scroll while following. Once the user zooms/pans, following is off
+    // and their view is left untouched until they press Reset.
+    if(!following_)
+        return;
     const double lo = qMax(0.0, t - window_s_);
     axisX_->setRange(lo, qMax(t, window_s_));
     const double pad = qMax(1.0, (yMax_ - yMin_) * 0.05);
@@ -212,6 +281,7 @@ void JointPlotWidget::onClear()
     for(auto &kv : present_) kv.second->clear();
     for(auto &kv : goal_)    kv.second->clear();
     yInit_ = false;
+    following_ = true;                 // resume live follow after a clear
     axisX_->setRange(0, window_s_);
 }
 
@@ -245,8 +315,8 @@ void JointPlotWidget::zoomOut() { chart_->zoomOut(); }
 void JointPlotWidget::zoomReset()
 {
     chart_->zoomReset();
+    following_ = true;                  // resume auto-follow
     axisX_->setRange(0, window_s_);
-    yInit_ = false;
 }
 
 void JointPlotWidget::onSeriesHovered(const QPointF &pt, bool state, uint8_t id)
