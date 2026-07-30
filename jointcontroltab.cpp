@@ -54,12 +54,12 @@ JointControlTab::JointControlTab(QWidget *parent)
     // ---- compliance bar (acts on armed joints) -----------------------------
     modeCombo_ = new QComboBox(this);
     modeCombo_->addItems({"Position", "Wheel", "Current (compliant)"});
-    modeCombo_->setToolTip("Work mode for the armed joints. 'Current (compliant)' puts\n"
+    modeCombo_->setToolTip("Work mode for all joints. 'Current (compliant)' puts\n"
                            "HLS joints in force mode; 'Position' is normal servo mode.");
     stiffnessSlider_ = new QSlider(Qt::Horizontal, this);
     stiffnessSlider_->setRange(0, 254); stiffnessSlider_->setValue(32);   // Kp; 32 = factory default
     stiffnessSlider_->setMinimumWidth(220);
-    stiffnessSlider_->setToolTip("Stiffness = position Kp (SRAM reg 50) of the armed HLS joints.\n"
+    stiffnessSlider_->setToolTip("Stiffness = position Kp (SRAM reg 50) of all HLS joints.\n"
                                  "High = stiff/rigid, low = soft/compliant. 32 = default. Live, no EPROM wear.");
     stiffness_ = new QSpinBox(this); stiffness_->setRange(0, 254); stiffness_->setValue(32);
 
@@ -69,7 +69,7 @@ JointControlTab::JointControlTab(QWidget *parent)
     connect(modeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &JointControlTab::onModeChanged);
 
     auto *cbar = new QHBoxLayout();
-    cbar->addWidget(new QLabel("Compliance — armed:", this));
+    cbar->addWidget(new QLabel("Compliance — all joints:", this));
     cbar->addWidget(new QLabel("Mode", this)); cbar->addWidget(modeCombo_);
     cbar->addSpacing(12);
     cbar->addWidget(new QLabel("Stiffness (Kp)", this));
@@ -194,6 +194,15 @@ std::vector<feetech_servo::GroupTarget> JointControlTab::armedTargets(int pos) c
     return armed;
 }
 
+std::vector<feetech_servo::GroupTarget> JointControlTab::allTargets() const
+{
+    std::vector<feetech_servo::GroupTarget> all;
+    for(auto *r : rows_)
+        if(r->profile().known)
+            all.push_back({r->id(), r->profile(), 0});
+    return all;
+}
+
 void JointControlTab::onSyncWriteClicked()
 {
     // Sync Write sends the SAME master Goal value to every armed joint, in one
@@ -203,10 +212,11 @@ void JointControlTab::onSyncWriteClicked()
 
 void JointControlTab::onModeChanged()
 {
-    emit modeRequested(modeCombo_->currentIndex(), armedTargets());
+    // Mode/stiffness are per-joint properties, unrelated to the sync-write group.
+    emit modeRequested(modeCombo_->currentIndex(), allTargets());
 }
 
 void JointControlTab::onStiffnessChanged()
 {
-    emit stiffnessRequested(stiffness_->value(), armedTargets());
+    emit stiffnessRequested(stiffness_->value(), allTargets());
 }

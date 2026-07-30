@@ -56,6 +56,7 @@ private:
     void onModeChanged();
     void onStiffnessChanged();
     std::vector<feetech_servo::GroupTarget> armedTargets(int pos = 0) const;
+    std::vector<feetech_servo::GroupTarget> allTargets() const;
 
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
