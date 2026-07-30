@@ -46,11 +46,16 @@ signals:
     void jogged(uint8_t id, int target);
     void torqueAllRequested(bool on);                    // master on/off
     void syncWriteRequested(const std::vector<feetech_servo::GroupTarget> &armed);
+    void modeRequested(int mode, const std::vector<feetech_servo::GroupTarget> &armed);
+    void stiffnessRequested(int limit, const std::vector<feetech_servo::GroupTarget> &armed);
     void pollTick();                                     // MainWindow reads one/some servos
 
 private:
     void onSyncWriteClicked();
     void onSelectAllSync(bool on);
+    void onModeChanged();
+    void onStiffnessChanged();
+    std::vector<feetech_servo::GroupTarget> armedTargets(int pos = 0) const;
 
     QVBoxLayout *rowLayout_ = nullptr;
     std::vector<JointRow*> rows_;
@@ -60,6 +65,9 @@ private:
     QSpinBox *speed_ = nullptr;
     QSpinBox *acc_ = nullptr;
     QSpinBox *torque_ = nullptr;
+    class QComboBox *modeCombo_ = nullptr;
+    class QSlider *stiffnessSlider_ = nullptr;
+    QSpinBox *stiffness_ = nullptr;
     QTimer   *poll_ = nullptr;
 };
 

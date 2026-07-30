@@ -62,6 +62,9 @@ private slots:
     void sync_group_mixed_series_emits_one_packet_per_series();
 
     void csv_recorder_writes_header_and_rows();
+
+    void stiffness_writes_torque_limit_reg_48();
+    void mode_current_puts_hls_in_ele_mode();
 };
 
 // Build a known ServoProfile for a given series.
@@ -362,6 +365,49 @@ void TestPackets::csv_recorder_writes_header_and_rows()
     QCOMPARE(lines[1], QString("0.100,1,HLS3955,position,3083"));
     QCOMPARE(lines[2], QString("0.200,2,HLS3915,position,4095"));
     QFile::remove(path);
+}
+
+// Stiffness = torque limit at register 48.
+void TestPackets::stiffness_writes_torque_limit_reg_48()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    set_stiffness_for(&serial, 1, prof(HLS), 300);
+
+    bool at48 = false;
+    for(size_t i = 0; i + 6 < serial.tx.size(); i++)
+        if(serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
+           serial.tx[i+2] == 1 && serial.tx[i+4] == 0x03 && serial.tx[i+5] == 48)
+        {
+            const uint16_t v = uint16_t(serial.tx[i+6]) | (uint16_t(serial.tx[i+7]) << 8);
+            QCOMPARE(v, uint16_t(300));
+            at48 = true;
+        }
+    QVERIFY2(at48, "stiffness must write the torque-limit register 48");
+
+    // SCS has Lock at reg 48, not torque limit -> must be skipped
+    serial.tx.clear();
+    set_stiffness_for(&serial, 2, prof(SCS, 1), 300);
+    QVERIFY2(serial.tx.empty(), "SCS must not have reg 48 written (it is the Lock flag)");
+}
+
+// Current-compliant mode puts an HLS servo into ele (constant-current) mode = 2.
+void TestPackets::mode_current_puts_hls_in_ele_mode()
+{
+    using namespace feetech_servo;
+    CapturingSerial serial;
+    SCSCL scs(&serial); SMS_STS sms(&serial); HLSCL hls(&serial);
+
+    set_work_mode_for(&scs, &sms, &hls, 1, prof(HLS), 2);
+    bool mode2 = false;
+    for(size_t i = 0; i + 6 < serial.tx.size(); i++)
+        if(serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
+           serial.tx[i+4] == 0x03 && serial.tx[i+5] == 33)   // Work Mode register
+        {
+            QCOMPARE(serial.tx[i+6], uint8_t(2));            // 2 = current/force
+            mode2 = true;
+        }
+    QVERIFY2(mode2, "Current mode must write Work Mode register 33 = 2");
 }
 
 QTEST_MAIN(TestPackets)

@@ -95,6 +95,8 @@ private slots:
     void onJointJogged(uint8_t id, int target);
     void onJointTorqueAll(bool on);
     void onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> &armed);
+    void onJointMode(int mode, const std::vector<feetech_servo::GroupTarget> &armed);
+    void onJointStiffness(int limit, const std::vector<feetech_servo::GroupTarget> &armed);
     void onJointPollTick();
     void onPlotFeedTick();
     void onTabChanged(int index);

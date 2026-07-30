@@ -10,6 +10,7 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QSlider>
+#include <QComboBox>
 #include <QTimer>
 
 JointControlTab::JointControlTab(QWidget *parent)
@@ -50,6 +51,32 @@ JointControlTab::JointControlTab(QWidget *parent)
     bar->addWidget(new QLabel("acc", this));    bar->addWidget(acc_);
     bar->addWidget(new QLabel("torque", this)); bar->addWidget(torque_);
 
+    // ---- compliance bar (acts on armed joints) -----------------------------
+    modeCombo_ = new QComboBox(this);
+    modeCombo_->addItems({"Position", "Wheel", "Current (compliant)"});
+    modeCombo_->setToolTip("Work mode for the armed joints. 'Current (compliant)' puts\n"
+                           "HLS joints in force mode; 'Position' is normal servo mode.");
+    stiffnessSlider_ = new QSlider(Qt::Horizontal, this);
+    stiffnessSlider_->setRange(0, 1000); stiffnessSlider_->setValue(1000);
+    stiffnessSlider_->setMinimumWidth(220);
+    stiffnessSlider_->setToolTip("Stiffness = torque limit (holding force) of the armed joints.\n"
+                                 "High = stiff/rigid, low = soft/compliant. Applied live.");
+    stiffness_ = new QSpinBox(this); stiffness_->setRange(0, 1000); stiffness_->setValue(1000);
+
+    connect(stiffnessSlider_, &QSlider::valueChanged, stiffness_, &QSpinBox::setValue);
+    connect(stiffness_, QOverload<int>::of(&QSpinBox::valueChanged), stiffnessSlider_, &QSlider::setValue);
+    connect(stiffness_, QOverload<int>::of(&QSpinBox::valueChanged), this, &JointControlTab::onStiffnessChanged);
+    connect(modeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &JointControlTab::onModeChanged);
+
+    auto *cbar = new QHBoxLayout();
+    cbar->addWidget(new QLabel("Compliance — armed:", this));
+    cbar->addWidget(new QLabel("Mode", this)); cbar->addWidget(modeCombo_);
+    cbar->addSpacing(12);
+    cbar->addWidget(new QLabel("Stiffness", this));
+    cbar->addWidget(stiffnessSlider_);
+    cbar->addWidget(stiffness_);
+    cbar->addStretch(1);
+
     // ---- scrollable row list ----------------------------------------------
     auto *rowHost = new QWidget(this);
     rowLayout_ = new QVBoxLayout(rowHost);
@@ -71,6 +98,7 @@ JointControlTab::JointControlTab(QWidget *parent)
 
     auto *outer = new QVBoxLayout(this);
     outer->addLayout(bar);
+    outer->addLayout(cbar);
     outer->addWidget(split, 1);
 
     connect(torqueOff, &QPushButton::clicked, this, [this]{ emit torqueAllRequested(false); });
@@ -157,14 +185,28 @@ void JointControlTab::onSelectAllSync(bool on)
         r->setSyncArmed(on);
 }
 
+std::vector<feetech_servo::GroupTarget> JointControlTab::armedTargets(int pos) const
+{
+    std::vector<feetech_servo::GroupTarget> armed;
+    for(auto *r : rows_)
+        if(r->isSyncArmed() && r->profile().known)
+            armed.push_back({r->id(), r->profile(), pos});
+    return armed;
+}
+
 void JointControlTab::onSyncWriteClicked()
 {
     // Sync Write sends the SAME master Goal value to every armed joint, in one
     // command per series. (Per-joint live positioning is the row sliders.)
-    const int goal = goal_->value();
-    std::vector<feetech_servo::GroupTarget> armed;
-    for(auto *r : rows_)
-        if(r->isSyncArmed() && r->profile().known)
-            armed.push_back({r->id(), r->profile(), goal});
-    emit syncWriteRequested(armed);
+    emit syncWriteRequested(armedTargets(goal_->value()));
+}
+
+void JointControlTab::onModeChanged()
+{
+    emit modeRequested(modeCombo_->currentIndex(), armedTargets());
+}
+
+void JointControlTab::onStiffnessChanged()
+{
+    emit stiffnessRequested(stiffness_->value(), armedTargets());
 }

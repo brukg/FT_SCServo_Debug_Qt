@@ -124,6 +124,52 @@ inline int position_max_for(ModelSeries series)
     return (series == SCS || series == SCS2) ? 1023 : 4095;
 }
 
+// ---- compliance controls ------------------------------------------------
+
+// Set a servo's work mode: 0 = position/servo, 1 = wheel/speed, 2 = current-force.
+// Current-force (compliance) exists on HLS only; STS/SMS fall back to position for
+// mode 2, and SCS stays position (this UI drives SCS in position only).
+inline void set_work_mode_for(SCSCL *scs, SMS_STS *sms, HLSCL *hls,
+                              uint8_t id, const ServoProfile &p, int mode)
+{
+    (void)scs;
+    if(!p.known) return;
+    switch(p.series)
+    {
+        case HLS:
+            if(mode == 2)      hls->ele_mode(id);      // constant current / force
+            else if(mode == 1) hls->wheel_mode(id);
+            else               hls->servo_mode(id);
+            break;
+        case SCS:
+        case SCS2:
+            break;                                     // position-only here
+        default:                                       // SMS / STS / SMBL
+            if(mode == 1) sms->wheel_mode(id);
+            else          sms->rotation_mode(id);
+            break;
+    }
+}
+
+// Stiffness = Torque Limit (reg 48), the max holding force in position mode.
+// High = stiff, low = compliant. Reg 48 is Torque Limit on HLS/STS/SMS but is the
+// Lock flag on SCS, so SCS is skipped.
+inline void set_stiffness_for(SCSerial *raw, uint8_t id, const ServoProfile &p, int limit)
+{
+    if(!p.known || p.series == SCS || p.series == SCS2) return;
+    raw->set_end(p.end);
+    raw->write_word(id, 48, (uint16_t)limit);
+}
+
+// In current-force (compliance) mode, command a target current/force directly.
+inline void write_force_for(SCSCL *scs, SMS_STS *sms, HLSCL *hls,
+                            uint8_t id, const ServoProfile &p, int force)
+{
+    (void)scs; (void)sms;
+    if(!p.known || p.series != HLS) return;
+    hls->write_ele(id, (int16_t)force);
+}
+
 }
 
 #endif // SERVO_DISPATCH_H

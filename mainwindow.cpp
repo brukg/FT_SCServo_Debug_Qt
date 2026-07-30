@@ -89,6 +89,8 @@ void MainWindow::setupJointControl()
     connect(joint_tab_, &JointControlTab::jogged,             this, &MainWindow::onJointJogged);
     connect(joint_tab_, &JointControlTab::torqueAllRequested, this, &MainWindow::onJointTorqueAll);
     connect(joint_tab_, &JointControlTab::syncWriteRequested, this, &MainWindow::onJointSyncWrite);
+    connect(joint_tab_, &JointControlTab::modeRequested,      this, &MainWindow::onJointMode);
+    connect(joint_tab_, &JointControlTab::stiffnessRequested, this, &MainWindow::onJointStiffness);
     connect(joint_tab_, &JointControlTab::pollTick,           this, &MainWindow::onJointPollTick);
     connect(ui->tabWidget, &QTabWidget::currentChanged,       this, &MainWindow::onTabChanged);
 
@@ -203,6 +205,19 @@ void MainWindow::onJointSyncWrite(const std::vector<feetech_servo::GroupTarget> 
                                     armed, joint_tab_->speed(), joint_tab_->acc(), joint_tab_->torque());
     for(const auto &t : armed)
         last_goal_[t.id] = t.pos;
+}
+
+void MainWindow::onJointMode(int mode, const std::vector<feetech_servo::GroupTarget> &armed)
+{
+    for(const auto &t : armed)
+        feetech_servo::set_work_mode_for(scs_serial_, sms_sts_serial_, hls_serial_,
+                                         t.id, t.profile, mode);
+}
+
+void MainWindow::onJointStiffness(int limit, const std::vector<feetech_servo::GroupTarget> &armed)
+{
+    for(const auto &t : armed)
+        feetech_servo::set_stiffness_for(scserial_, t.id, t.profile, limit);
 }
 
 void MainWindow::onJointPollTick()
