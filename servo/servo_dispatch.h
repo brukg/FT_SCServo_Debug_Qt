@@ -151,14 +151,15 @@ inline void set_work_mode_for(SCSCL *scs, SMS_STS *sms, HLSCL *hls,
     }
 }
 
-// Stiffness = Torque Limit (reg 48), the max holding force in position mode.
-// High = stiff, low = compliant. Reg 48 is Torque Limit on HLS/STS/SMS but is the
-// Lock flag on SCS, so SCS is skipped.
-inline void set_stiffness_for(SCSerial *raw, uint8_t id, const ServoProfile &p, int limit)
+// Stiffness = the live position Kp. Confirmed by reading the hardware: on HLS the
+// SRAM Kp (reg 50) is the active gain (reads 32 by default), writable live with no
+// EPROM wear or unlock. Low Kp = soft/compliant, high = stiff. (Torque Limit at
+// reg 48 does NOT govern holding stiffness.) HLS only; other series have no SRAM
+// Kp here and are skipped.
+inline void set_stiffness_for(SCSerial *raw, uint8_t id, const ServoProfile &p, int kp)
 {
-    if(!p.known || p.series == SCS || p.series == SCS2) return;
-    raw->set_end(p.end);
-    raw->write_word(id, 48, (uint16_t)limit);
+    if(!p.known || p.series != HLS) return;
+    raw->write_byte(id, 50, (uint8_t)kp);
 }
 
 // In current-force (compliance) mode, command a target current/force directly.

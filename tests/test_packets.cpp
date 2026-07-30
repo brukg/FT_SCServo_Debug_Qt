@@ -63,7 +63,7 @@ private slots:
 
     void csv_recorder_writes_header_and_rows();
 
-    void stiffness_writes_torque_limit_reg_48();
+    void stiffness_writes_kp_reg_50();
     void mode_current_puts_hls_in_ele_mode();
 };
 
@@ -367,28 +367,27 @@ void TestPackets::csv_recorder_writes_header_and_rows()
     QFile::remove(path);
 }
 
-// Stiffness = torque limit at register 48.
-void TestPackets::stiffness_writes_torque_limit_reg_48()
+// Stiffness = live position Kp at SRAM register 50 (confirmed on hardware).
+void TestPackets::stiffness_writes_kp_reg_50()
 {
     using namespace feetech_servo;
     CapturingSerial serial;
-    set_stiffness_for(&serial, 1, prof(HLS), 300);
+    set_stiffness_for(&serial, 1, prof(HLS), 8);
 
-    bool at48 = false;
+    bool at50 = false;
     for(size_t i = 0; i + 6 < serial.tx.size(); i++)
         if(serial.tx[i] == 0xff && serial.tx[i+1] == 0xff &&
-           serial.tx[i+2] == 1 && serial.tx[i+4] == 0x03 && serial.tx[i+5] == 48)
+           serial.tx[i+2] == 1 && serial.tx[i+4] == 0x03 && serial.tx[i+5] == 50)
         {
-            const uint16_t v = uint16_t(serial.tx[i+6]) | (uint16_t(serial.tx[i+7]) << 8);
-            QCOMPARE(v, uint16_t(300));
-            at48 = true;
+            QCOMPARE(serial.tx[i+6], uint8_t(8));   // Kp value
+            at50 = true;
         }
-    QVERIFY2(at48, "stiffness must write the torque-limit register 48");
+    QVERIFY2(at50, "stiffness must write the SRAM Kp register 50");
 
-    // SCS has Lock at reg 48, not torque limit -> must be skipped
+    // Non-HLS series have no SRAM Kp here -> must be skipped
     serial.tx.clear();
-    set_stiffness_for(&serial, 2, prof(SCS, 1), 300);
-    QVERIFY2(serial.tx.empty(), "SCS must not have reg 48 written (it is the Lock flag)");
+    set_stiffness_for(&serial, 2, prof(STS), 8);
+    QVERIFY2(serial.tx.empty(), "non-HLS must not be written for stiffness");
 }
 
 // Current-compliant mode puts an HLS servo into ele (constant-current) mode = 2.

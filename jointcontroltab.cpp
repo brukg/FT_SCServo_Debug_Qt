@@ -57,11 +57,11 @@ JointControlTab::JointControlTab(QWidget *parent)
     modeCombo_->setToolTip("Work mode for the armed joints. 'Current (compliant)' puts\n"
                            "HLS joints in force mode; 'Position' is normal servo mode.");
     stiffnessSlider_ = new QSlider(Qt::Horizontal, this);
-    stiffnessSlider_->setRange(0, 1000); stiffnessSlider_->setValue(1000);
+    stiffnessSlider_->setRange(0, 254); stiffnessSlider_->setValue(32);   // Kp; 32 = factory default
     stiffnessSlider_->setMinimumWidth(220);
-    stiffnessSlider_->setToolTip("Stiffness = torque limit (holding force) of the armed joints.\n"
-                                 "High = stiff/rigid, low = soft/compliant. Applied live.");
-    stiffness_ = new QSpinBox(this); stiffness_->setRange(0, 1000); stiffness_->setValue(1000);
+    stiffnessSlider_->setToolTip("Stiffness = position Kp (SRAM reg 50) of the armed HLS joints.\n"
+                                 "High = stiff/rigid, low = soft/compliant. 32 = default. Live, no EPROM wear.");
+    stiffness_ = new QSpinBox(this); stiffness_->setRange(0, 254); stiffness_->setValue(32);
 
     connect(stiffnessSlider_, &QSlider::valueChanged, stiffness_, &QSpinBox::setValue);
     connect(stiffness_, QOverload<int>::of(&QSpinBox::valueChanged), stiffnessSlider_, &QSlider::setValue);
@@ -72,7 +72,7 @@ JointControlTab::JointControlTab(QWidget *parent)
     cbar->addWidget(new QLabel("Compliance — armed:", this));
     cbar->addWidget(new QLabel("Mode", this)); cbar->addWidget(modeCombo_);
     cbar->addSpacing(12);
-    cbar->addWidget(new QLabel("Stiffness", this));
+    cbar->addWidget(new QLabel("Stiffness (Kp)", this));
     cbar->addWidget(stiffnessSlider_);
     cbar->addWidget(stiffness_);
     cbar->addStretch(1);
