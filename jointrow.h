@@ -28,20 +28,21 @@ public:
     uint8_t id() const { return id_; }
     const feetech_servo::ServoProfile &profile() const { return profile_; }
     int  target() const;
-    bool isTorqueOn() const;           // torque enabled AND servo known == commandable
+    bool isSyncArmed() const;
 
     void setPresentPosition(int pos);
-    void setTorque(bool on);           // reflect real state without re-emitting
+    void setTorque(bool on);           // reflect state without re-emitting
+    void setSyncArmed(bool on);
 
 signals:
     void torqueToggled(uint8_t id, bool on);
     void jogged(uint8_t id, int target);
+    void syncArmChanged(uint8_t id, bool armed);
 
 private:
     void onTorqueClicked(bool on);
     void onSliderMoved(int v);
     void onSpinChanged(int v);
-    void updateEnabled();              // slider/spin enabled iff torque on
 
     uint8_t                     id_;
     feetech_servo::ServoProfile profile_;
@@ -50,6 +51,7 @@ private:
     QSlider   *slider_ = nullptr;
     QSpinBox  *spin_ = nullptr;
     QLabel    *present_ = nullptr;
+    QCheckBox *sync_ = nullptr;
     bool       suppress_ = false;      // guard against slider<->spin feedback loops
 };
 
